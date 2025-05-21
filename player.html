@@ -1,0 +1,134 @@
+<html><head>
+<title> ultra power saving player </title>
+<script>
+var filestable;
+var songs = [];
+var idlist = [];
+var cursong = -1;
+var playingtag;
+var objecturls = [];
+var audiotag;
+
+function playsong(n){
+  audiotag.src = songs[n].url;
+  if(playingtag)
+    playingtag.textContent = "";
+  playingtag = songs[n].playingtag;
+  playingtag.textContent = "->";
+}
+
+function upbutton(e){
+  var song = idlist[e.target.parentNode.id];
+  var idx = 0
+  for(; idx<songs.length; idx++)
+    if(songs[i] === song)
+      break;
+  var idx2 = idx-1>=0?idx-1:songs.length-1;
+  var song2 = songs[idx2];
+  songs[idx] = song2;
+  songs[idx2] = song;
+}
+
+function downbutton(e){
+  var song = idlist[e.target.parentNode.id];
+  var idx = 0
+  for(; idx<songs.length; idx++)
+    if(songs[i] === song)
+      break;
+  var idx2 = idx+1<songs.length?idx+1:0;
+  var song2 = songs[idx2];
+  songs[idx] = song2;
+  songs[idx2] = song;
+}
+
+window.onload = function(){
+  audiotag = document.getElementById("audiotag");
+  document.getElementById("load").onclick = function(){
+    // teardown
+    while(objecturls.length > 0)
+      URL.revokeObjectURL(objecturls.pop());
+    playingtags = [];
+    if(filestable)
+      while(filestable.firstChild)
+        filestable.removeChild(filestable.firstChild);
+    // setup
+    if(filestable)
+      document.removeChild(filestable);
+    else
+      filestable = document.createElement("table");
+    // go
+    var files = document.getElementById("fileinput").files;
+    for(var i=0; i<files.length; i++){
+      objecturls.push(URL.createObjectURL(files[i]));
+      var tr = document.createElement("tr");
+      var td0 = document.createElement("td");
+      tr.appendChild(td0);
+      var td1 = document.createElement("td");
+      td1.textContent = files[i].name;
+      tr.appendChild(td1);
+      var td2 = document.createElement("td");
+      td2.id = i;
+      var up = document.createElement("input");
+      up.type = "button";
+      up.value = "up";
+      up.onclick = upbutton;
+      td2.appendChild(up);
+      var down = document.createElement("input");
+      down.type = "button";
+      down.value = "down";
+      down.onclick = "button";
+      td2.appendChild(down);
+      tr.appendChild(td2);
+
+      filestable.appendChild(tr);
+      var song = {file:files[i],
+                  playingtag:td0,
+                  ftrow:tr,
+                  url:URL.createObjectURL(files[i])};
+      songs.push(song);
+      idlist.push(song);
+    }
+    document.body.appendChild(filestable);
+    playsong(0);
+  }
+  var jumps = document.getElementsByClassName("jump");
+  for(var i=0; i<jumps.length; i++){
+    jumps[i].onclick = function(e){
+      console.log(e.target.value);
+      audiotag.fastSeek(audiotag.currentTime+Number(e.target.value));
+    }
+  }
+  var speeds = document.getElementsByClassName("speed");
+  for(var i=0; i<speeds.length; i++)
+    speeds[i].onclick = function(e){
+      console.log(e.target.value);
+      audiotag.playbackRate = e.target.value;
+    }
+  document.getElementById("jumpto").onclick = function(){
+    audiotag.fastSeek(document.getElementById("jumptoloc").value);
+  };
+  document.getElementById("setspeed").onclick = function(){
+    audiotag.playbackRate = document.getElementById("speedloc").value;
+  };
+}
+</script>
+</head><body>
+<p>
+<audio id="audiotag" controls>
+</p><p>
+<input type="button" value="-120" class="jump">
+<input type="button" value="-20" class="jump">
+<input type="button" value="20" class="jump">
+<input type="button" value="120" class="jump">
+<input type="text" id="jumptoloc">
+<input type="button" value="jumpto" id="jumpto">
+</p><p>
+<input type="button" value="1" class="speed">
+<input type="button" value="1.5" class="speed">
+<input type="button" value="2" class="speed">
+<input type="text" id="speedloc">
+<input type="button" value="speed" id="setspeed">
+</p><p>
+<input type="file" id="fileinput" multiple>
+<input type="button" value="load" id="load">
+</p></body></html>

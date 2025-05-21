@@ -1,0 +1,368 @@
+#!/usr/bin/python
+
+import gtk, gobject, time, math, socket, optparse, os
+
+from board import *
+from playerdata import *
+import net, console, launcher
+
+class DisplayFrame:
+    def __init__(self, player, shadow = False):
+        print "make a displayframe"
+        self.player = player
+        self.playername = player.name
+        self.shadow = shadow
+        self.squaresize = player.squaresize
+        self.frame = gtk.Frame(self.playername)
+        self.hbox = gtk.HBox()
+        self.frame.add(self.hbox)
+        self.drawing_area = gtk.DrawingArea()
+        self.drawing_area.set_size_request((player.board_width+2)*player.squaresize, (player.board_height+1)*player.squaresize)
+        self.drawing_area.w = (player.board_width+2)*player.squaresize
+        self.drawing_area.h = (player.board_height+1)*player.squaresize
+        self.drawing_area.squaresize = player.squaresize
+        self.drawing_area.connect("expose-event", draw, self)
+        self.hbox.add(self.drawing_area)
+        self.vbox = gtk.VBox()
+        self.hbox.add(self.vbox)
+        self.next_drawing_area = gtk.DrawingArea()
+        self.next_drawing_area.set_size_request(4*player.squaresize,4*player.squaresize)
+        self.next_drawing_area.w = 4*player.squaresize
+        self.next_drawing_area.h = 4*player.squaresize
+        self.next_drawing_area.squaresize = player.squaresize
+        self.next_drawing_area.connect("expose-event", draw_next, self)
+        self.vbox.add(self.next_drawing_area)
+        self.vbox.add(gtk.Label())
+        self.status_label = gtk.Label()
+        self.vbox.add(self.status_label)
+        self.ticklen_label = gtk.Label()
+        self.vbox.add(self.ticklen_label)
+        self.labels = {}
+        for attr in attrs[2:]:
+            self.labels[attr] = gtk.Label()
+            self.vbox.add(self.labels[attr])
+        main_hbox.add(self.frame)
+        self.board = Board(self, player)
+        if not shadow:
+            self.board.next()
+
+
+    def setup_tick(self, board):
+        next_tick = gobject.get_current_time()
+        gobject.timeout_add(board.ticklen, board.tick, next_tick)
+        board.next_tick = next_tick
+        
+    def draw(self,command = "all"):
+        if command == "board" or command == "boardredraw" or command == "all":
+            self.drawing_area.queue_draw_area(0,0,self.drawing_area.w, self.drawing_area.h)
+        if command == "board" or command == "all": # don't send useless packets
+            self.transfer("board")
+        if command == "attrs" or command == "all":
+            for i in attrs[3:]:
+                self.labels[i].set_text("%s : %d"%(i, self.board.__dict__[i]))
+            self.ticklen_label.set_text("%sms"%self.board.ticklen)
+            if self.board.done:
+                self.status_label.set_text("done")
+            elif self.board.paused:
+                self.status_label.set_text("paused")
+            else:
+                self.status_label.set_text("")
+            self.transfer("attrs")
+        if command == "next" or command == "all":
+            self.next_drawing_area.queue_draw_area(0,0,self.next_drawing_area.w, self.next_drawing_area.h)
+            self.transfer("next")
+
+    def new_board(self):
+        self.transfer("reset")
+        self.board = Board(self, self.player)
+        self.board.next()
+
+    def putlines(self, lines):
+        self.board.putlines(lines)
+
+    def pushlines(self, lines):
+        for player in players:
+            if display_frames[player] != self:
+                display_frames[player].putlines(lines)
+        self.transfer("lines", lines)
+
+    def transfer(self, command, lines=0):
+        if self.shadow:
+            return
+        if command == "board":
+            data = str(self.board)
+        elif command == "attrs":
+            data = self.board.attrs()
+        elif command == "next":
+            data = repr(self.board.next_board)
+        elif command == "lines":
+            data = str(lines)
+        elif command == "pause":
+            data = '(empty)'
+        elif command == "unpause":
+            data = '(empty)'
+        elif command == "reset":
+            data = '(empty)'
+        net.send(self.playername, command, data)
+
+        
+white = gtk.gdk.Color(65535,65535,65535)
+black = gtk.gdk.Color(0,0,0)
+
+def draw(a,b,displayframe):
+    board = displayframe.board
+    drawing_area = displayframe.drawing_area
+    display = drawing_area.window
+    cm = displayframe.drawing_area.get_colormap()
+    needing_gcs = ["wall", "down", "falling"]
+    gcs = {}
+    
+    t = time.time() % 31415
+    a = 0
+    for i in needing_gcs:
+        gcs[i] = display.new_gc()
+        gcs[i].set_foreground(cm.alloc_color(int(math.sin(t+a)*32767+32768),
+                                             int(math.sin(t+a+2*math.pi/3)*32767+32768),
+                                             int(math.sin(t+a+4*math.pi/3)*32767+32768)))
+        a += math.pi/6
+    gcs["empty"] = display.new_gc()
+    for i in xrange(0,board.height):
+        for j in xrange(0,board.width):
+            display.draw_rectangle(gcs[board[i][j]], True,
+                                   j*drawing_area.squaresize,
+                                   i*drawing_area.squaresize,
+                                   drawing_area.squaresize,
+                                   drawing_area.squaresize)
+    if displayframe.player.grid:
+        grey = display.new_gc()
+        grey.set_foreground(cm.alloc_color(32767,32767,32767))
+        for i in xrange(2, board.width-1):
+            for j in xrange(1, board.height-1):
+                display.draw_rectangle(grey, True, i*drawing_area.squaresize-1,
+                                       j*drawing_area.squaresize-1, 2, 2)
+        
+        
+
+def draw_next(a,b,displayframe):
+    drawing_area = displayframe.next_drawing_area
+    board = displayframe.board
+    display = drawing_area.window
+    cm = drawing_area.get_colormap()
+    gcs = {"empty":display.new_gc(), "filled":display.new_gc()}
+    gcs["empty"].set_foreground(cm.alloc_color(0,0,0))
+    gcs["filled"].set_foreground(cm.alloc_color(32767,32767,32767))
+    for i in xrange(0,4):
+        for j in xrange(0,4):
+            display.draw_rectangle(gcs[board.next_board[j][i]], True,
+                                   i*drawing_area.squaresize,
+                                   j*drawing_area.squaresize,
+                                   drawing_area.squaresize,
+                                   drawing_area.squaresize)
+
+    
+def on_network_recieve(lines):
+    if len(lines)==0:
+        return
+    if lines[1] == "chat":
+        console.out(lines[0]+': '+'\n'.join(lines[2:]))
+    for shadow in shadows:
+        if shadow == lines[0]:
+            if lines[1] == "board":
+                display_frames[shadow].board.setboard(lines[2:])
+            elif lines[1] == "attrs":
+                for line in lines[2:4]:
+                    (key, value) = line.split(':')
+                    if value.strip() == "True":
+                        display_frames[shadow].board.__dict__[key] = True
+                    else:
+                        display_frames[shadow].board.__dict__[key] = False
+                for line in lines[4:-1]: #that final newline...
+                    (key, value) = line.split(':')
+                    display_frames[shadow].board.__dict__[key] = int(value)
+                display_frames[shadow].board.draw("attrs")
+            elif lines[1] == "next":
+                display_frames[shadow].board.next_board = eval(lines[2])
+                display_frames[shadow].board.draw("next")
+            elif lines[1] == "lines":
+                for player in players:
+                    display_frames[player].putlines(int(lines[2]))
+            elif lines[1] == "pause":
+                display_frames[shadow].board.pause()
+            elif lines[1] == "unpause":
+                display_frames[shadow].board.paused = 0
+
+def on_keypress(dummy, event):
+    keyname = gtk.gdk.keyval_name(event.keyval)
+    for player in players:
+        if keyname in registry[player].buttons:
+            if registry[player].buttons[keyname] == "pause":
+                display_frames[player].board.pause()
+            elif registry[player].buttons[keyname] == "reset":
+                display_frames[player].new_board()
+            else:
+                display_frames[player].board.execute(registry[player].buttons[keyname])
+#                print "executed %s on %s"%(player, keyname)
+    if keyname == "Escape":
+        gtk.main_quit()
+    if keyname == "Return":
+        for player in players:
+            if not display_frames[player].board.paused:
+                display_frames[player].board.pause()
+        console.getcommand()
+
+
+def draw_timeout_callback():
+    for player in players:
+        display_frames[player].draw("boardredraw")
+    return True
+
+
+
+parser = optparse.OptionParser()
+parser.add_option("-p", "--players", dest="players", default='')
+parser.add_option("-s", "--shadows", dest="shadows", default='')
+parser.add_option("-d", "--deaf", dest="deaf", action="store_true", default=False)
+parser.add_option("-t", "--tcp", dest="tcp", action="store_true", default=False)
+parser.add_option("-u", "--udp", dest="udp", action="store_true", default=False)
+(options, args) = parser.parse_args()
+
+
+
+def megasave():
+    megafile = open(os.path.expanduser('~/.tetrisconf'), 'w')
+    megaobject = {'registry': registry, 'players': players, 'shadows': shadows}
+    megafile.write(str(megaobject))
+    megafile.close()
+
+reg2play = {}
+def biglist_add(foo, player, state):
+    reg2play[player] = state
+
+def returnthings(newregistry, theplayers, theshadows):
+    global registry, players, shadows
+    players = theplayers
+    shadows = theshadows
+    registry = newregistry
+    megasave()
+    main_go(players, shadows)
+    
+
+def init_go():
+    launcher.launcher(registry, players, shadows, returnthings)
+    
+def main_start():
+    players = []
+    shadows = []
+    for player in reg2play:
+        if reg2play[player] == "playing":
+            players.append(player)
+        if reg2play[player] == "shadowing":
+            shadows.append(player)
+    main_go(players, shadows)
+
+def create_new_shadow(headers):
+    shadow = player_data(**headers)
+    display_frames[headers['name']] = DisplayFrame(shadow, shadow=True)
+    main_hbox.hide_all()
+    main_hbox.check_resize()
+    main_hbox.show_all()
+    main_hbox.grab_focus()
+    shadows.append(headers['name'])
+
+def remove_shadow(name):
+    shadows.remove(name)
+    main_hbox.remove(display_frames[name].frame)
+    main_hbox.hide_all()
+    main_hbox.check_resize()
+    main_hbox.show_all()
+    main_hbox.grab_focus()
+
+def connect(where):
+    slist = where.split(':')
+    if len(slist) == 1:
+        port = 11218
+    else:
+        port = slist[1]
+    server = slist[0]
+    net.connect(server, port)
+
+def getplayerheaders():
+    netheaders = []
+    for player in players:
+        netheaders.append(display_frames[player].player.netheaders())
+    return netheaders
+
+def take_focus():
+    main_hbox.grab_focus()
+
+def on_console_exec(s):
+    console.out(eval(s))
+
+def chat(s):
+    console.out(s)
+    net.send(players[0],"chat",s)
+
+display_frames = {}
+main_vbox = gtk.VBox()
+main_hbox = gtk.HBox()
+main_vbox.add(main_hbox)
+console = console.console(main_vbox, take_focus, on_console_exec, chat, connect)
+def main_go(theplayers, theshadows):
+    global players, shadows
+    players = theplayers
+    shadows = theshadows
+    main_window = gtk.Window(gtk.WINDOW_TOPLEVEL)
+    main_window.add(main_vbox)
+    print "making displayframes"
+    for player in players:
+        display_frames[player] = DisplayFrame(registry[player])
+    for shadow in shadows:
+        display_frames[shadow] = DisplayFrame(registry[shadow], shadow=True)
+    print "done making displayframes"
+    gobject.timeout_add(50, draw_timeout_callback)
+    main_window.connect("destroy", lambda w: gtk.main_quit())
+    main_hbox.connect("key-press-event", on_keypress)
+    main_hbox.set_flags(main_hbox.flags() | gtk.CAN_FOCUS)
+    main_window.show_all()
+    main_hbox.grab_focus()
+
+
+if options.players:
+    players = options.players.split(',')
+else:
+    try:
+        megafile = open(os.path.expanduser('~/.tetrisconf'))
+        megaobject = eval(megafile.read())
+        megafile.close()
+        print megaobject
+        registry = megaobject['registry']
+        print registry
+        for player in registry:
+            registry[player] = player_data().set_and_return(registry[player])
+            print player
+        print registry
+        players = megaobject['players']
+        print players
+        shadows = megaobject['shadows']
+        print shadows
+    except:
+        registry = {'Default': player_data()}
+        players = []
+        shadows = []
+
+if options.shadows:
+    shadows = options.shadows.split(',')
+
+def setnetcallback(thing, callback):
+    gobject.io_add_watch(thing, gobject.IO_IN, callback)
+
+net = net.net(options, setnetcallback, create_new_shadow, on_network_recieve, getplayerheaders, remove_shadow)
+
+
+if not options.players and not options.shadows:
+    init_go()
+else:
+    main_go(players, shadows)
+
+gtk.quit_add(0,net.quit)
+gtk.main()

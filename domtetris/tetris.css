@@ -1,0 +1,29 @@
+
+table.board {table-layout: fixed; border-spacing:0px}
+td {height:24px; width:22px; border: none}
+td.I {background-color:#0056ff}
+td.O {background-color:#00ca3f}
+td.S {background-color:#ff2d00}
+td.Z {background-color:#e0e000}
+td.T {background-color:#2d00bf}
+td.L {background-color:#fd00ff}
+td.J {background-color:#76ff00}
+td.wall {background-color:gray}
+td.empty {background-color:black}
+
+table.next {border:12px; border-style:solid; border-color: gray}
+
+table#attrtable {border-width: 2px; 
+		border-spacing: 2px; 
+		border-style: solid;
+		border-collapse: collapse;
+		border-color: gray}
+td.attrname {height: auto; width: auto;
+	     border-width:1px; border-style: solid; border-color: gray}
+td.attr {height: auto; width: auto;
+	border-style: solid; border-color:gray}
+
+div#board {float:left;width:350px}
+div#attrs {float:right;width:160px}
+div#prefs {clear: both}
+div#multihidden {display: none}

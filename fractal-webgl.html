@@ -1,0 +1,429 @@
+<html>
+<head>
+<script>
+var mousedownx;
+var mousedowny;
+var mousebox_xpos;
+var mousebox_ypos;
+var mousebox_xsz;
+var mousebox_ysz;
+var using_mousebox = false;
+var xpos;
+var ypos;
+var xsz;
+var ysz;
+var xres;
+var yres;
+
+var render_fractal = function(inxpos,inypos,inxsz,inysz){
+  var canvas = document.getElementById ('glfractal');
+  var nxres = Number(document.getElementById("xres").value);
+  var nyres = Number(document.getElementById("yres").value);
+  var changed_res = false;
+  if((nxres != xres) || (nyres != yres)){
+    xres = nxres;
+    yres = nyres;
+    canvas.width = xres;
+    canvas.height = yres;
+    var uic = document.getElementById("ui");
+    uic.width = xres;
+    uic.height = yres;
+    var canvases = document.getElementById("canvases");
+    canvases.style["width"] = xres;
+    canvases.style["height"] = yres;
+    changed_res = true;
+  }
+
+  var using_arguments = false;
+  if(inxpos != undefined){
+    using_arguments = true;
+    xpos = inxpos;
+    ypos = inypos;
+    xsz = inxsz;
+    if(inysz)
+      ysz = inysz;
+    else
+      ysz = xsz * yres/xres;
+  }
+  if((!using_arguments) && using_mousebox){
+    xpos = mousebox_xpos;
+    ypos = mousebox_ypos;
+    xsz = mousebox_xsz;
+    ysz = mousebox_ysz;
+  }
+  if(using_arguments || using_mousebox){
+    document.getElementById("xpos").value = xpos;
+    document.getElementById("ypos").value = ypos;
+    document.getElementById("xsz").value = xsz;
+    document.getElementById("ysz").value = ysz;
+  }
+  clear_mouse_box();
+  if((!using_arguments) && (!using_mousebox)){
+    var pxpos = Number(document.getElementById("xpos").value);
+    var pypos = Number(document.getElementById("ypos").value);
+    var pxsz = Number(document.getElementById("xsz").value);
+    var pysz = Number(document.getElementById("ysz").value);
+    if(document.getElementById("ensure_square_pixels").checked){
+      if(pxsz/pysz != xres/yres){
+        alert("If you want non-square pixels, uncheck the ensure square pixels setting.");
+        return;
+      }
+    }
+    xpos = pxpos;
+    ypos = pypos;
+    xsz = pxsz;
+    ysz = pysz;
+  }
+  if(!using_arguments){
+    // these need to be saved in different variables for the closure lol
+    var cxpos = xpos;
+    var cypos = ypos;
+    var cxsz = xsz;
+    var cysz = ysz;
+    var newbutton = document.createElement("input");
+    newbutton.type = "button";
+    newbutton.value = "restore: ";
+    newbutton.addEventListener("click", function(){render_fractal(cxpos,cypos,cxsz,cysz)});
+    var str = " " + xpos + ", " + ypos + ", " + xsz + ", " + ysz;
+    var newtr = document.createElement("tr");
+    var newtd1 = document.createElement("td");
+    var newtd2 = document.createElement("td");
+    newtd1.appendChild(newbutton);
+    newtd2.textContent = str;
+    newtr.appendChild(newtd1);
+    newtr.appendChild(newtd2);
+    document.getElementById("restoretable").appendChild(newtr);
+  }
+
+  var before = new Date();
+  var gl = canvas.getContext("webgl", {preserveDrawingBuffer: true});
+  if(changed_res)
+    gl.viewport(0,0,canvas.width, canvas.height);
+  var vshader = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vshader, document.getElementById("id-vshader").textContent);
+  gl.compileShader(vshader);
+  if(!gl.getShaderParameter(vshader, gl.COMPILE_STATUS))
+    console.log(gl.getShaderInfoLog(vshader));
+  var fshader = gl.createShader(gl.FRAGMENT_SHADER);
+  if(document.getElementById("mediump").checked)
+    gl.shaderSource(fshader, document.getElementById("mandelbrot-fshader").textContent);
+  else if(document.getElementById("dekkerdouble").checked)
+    gl.shaderSource(fshader, document.getElementById("mandelbrot-fshader-dekkerdouble").textContent);
+  gl.compileShader(fshader);
+  if(!gl.getShaderParameter(fshader, gl.COMPILE_STATUS))
+    console.log(gl.getShaderInfoLog(fshader));
+  var program = gl.createProgram();
+  gl.attachShader(program, vshader);
+  gl.attachShader(program, fshader);
+  gl.linkProgram(program);
+  if(!gl.getProgramParameter(program, gl.LINK_STATUS))
+    console.log(gl.getProgramInfoLog(program));
+  gl.useProgram(program);
+  var a_vertex_loc = gl.getAttribLocation(program, "a_vertex");
+  var u_pos_loc = gl.getUniformLocation(program, "u_pos");
+  var u_sz_loc = gl.getUniformLocation(program, "u_sz");
+  var vertexBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,  -1, 1,  1,-1,
+                                                    1,-1,  -1, 1,  1,1]),
+               gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(a_vertex_loc);
+  gl.vertexAttribPointer(a_vertex_loc, 2, gl.FLOAT, false, 0, 0);
+  gl.uniform2fv(u_pos_loc, [xpos,ypos]);
+  gl.uniform2fv(u_sz_loc, [xsz,ysz]);
+  gl.clearColor(0,0,1,1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  var after = new Date();
+  document.getElementById("time_to_draw").innerHTML = (after-before)/1000;
+}
+
+window.onload = function(){
+  xpos = Number(document.getElementById("xpos").value);
+  ypos = Number(document.getElementById("ypos").value);
+  xsz = Number(document.getElementById("xsz").value);
+  ysz = Number(document.getElementById("ysz").value);
+  xres = Number(document.getElementById("xres").value);
+  yres = Number(document.getElementById("yres").value);
+
+  var canvas = document.getElementById("ui");
+  canvas.addEventListener("mousedown", function(e){
+    console.log("mousedown");
+    mousedownx = e.clientX;
+    mousedowny = e.clientY;
+    console.log(mousedownx,mousedowny);
+  });
+  canvas.addEventListener("mouseup", function(e){
+    console.log("mouseup");
+    console.log(e.clientX, e.clientY);
+    clear_mouse_box();
+    var xl, xh, yl, yh;
+    if(mousedownx < e.clientX){
+      xl = mousedownx;
+      xh = e.clientX;
+    } else if(e.clientX < mousedownx){
+      xl = e.clientX;
+      xh = mousedownx;
+    } else {
+      clear_mouse_box();
+      return;
+    }
+    if(mousedowny < e.clientY){
+      yl = mousedowny;
+      yh = e.clientY;
+    } else if(e.clientY < mousedowny){
+      yl = e.clientY;
+      yh = mousedowny;
+    } else {
+      clear_mouse_box();
+      return;
+    }
+    var xm = (xl+xh)/2;
+    var ym = (yl+yh)/2;
+    var xd = xh-xl;
+    var yd = yh-yl;
+
+    if(document.getElementById("ensure_square_pixels").checked){
+      var new_xres = Number(document.getElementById("xres").value);
+      var new_yres = Number(document.getElementById("yres").value);
+      if(xd/yd != new_xres/new_yres){
+        if(xd < yd)
+          xd = new_xres/new_yres*yd;
+        else
+          yd = new_yres/new_xres*xd;
+        xl = xm - xd/2;
+        xh = xm + xd/2;
+        yl = ym - yd/2;
+        yh = ym + yd/2;
+      }
+    }
+
+    var canvas = document.getElementById("ui");
+    var ctx = canvas.getContext("2d");
+    ctx.beginPath();
+    ctx.rect(xl,yl,xd,yd);
+    ctx.strokeStyle = "#7f7f7f";
+    ctx.stroke();
+
+    mousebox_xpos = xpos + (xm/xres - 1/2) * xsz;
+    mousebox_ypos = ypos + (ym/yres - 1/2) * ysz;
+    mousebox_xsz = xsz * xd/xres;
+    mousebox_ysz = xsz * yd/yres;
+    using_mousebox = true;
+  });
+
+  document.getElementById("button").addEventListener("click", function(e){
+    render_fractal();
+  });
+
+  document.getElementById("clear_mouse_box").addEventListener("click", function(e){
+    clear_mouse_box();
+  });
+
+  document.getElementById("save").addEventListener("click", function(e){
+    e.target.href = document.getElementById("glfractal").toDataURL();
+    e.target.download = "fractal.png";
+  });
+
+  document.getElementById("restore_params").addEventListener("click", function(e){
+    var paramstrs = document.getElementById("restore_params_params").value.split(",");
+    var params = [];
+    for(var i=0; i<paramstrs.length; i++)
+      params.push(Number(paramstrs[i]));
+    if(params.length == 4)
+      render_fractal(params[0], params[1], params[2], params[3]);
+    else if(params.length == 3)
+      render_fractal(params[0], params[1], params[2]);
+    else
+      alert("Wrong number of parameters to restore");
+  });
+
+  render_fractal();
+}
+
+var clear_mouse_box = function(){
+  using_mousebox = false;
+  var canvas = document.getElementById("ui");
+  var ctx = canvas.getContext("2d");
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+}
+</script>
+<script type="x-shader/x-vertex" id="id-vshader">
+attribute vec2 a_vertex;
+varying vec2 v_windowCoords;
+
+void main(){
+  v_windowCoords = a_vertex;
+  gl_Position = vec4(a_vertex.x, a_vertex.y, 0, 1);
+}
+</script>
+<script type="x-shader/x-fragment" id="mandelbrot-fshader">
+precision highp float;
+
+varying vec2 v_windowCoords;
+uniform vec2 u_pos;
+uniform vec2 u_sz;
+
+void main() {
+  float x = u_pos.x + v_windowCoords.x * u_sz.x / 2.0;
+  float y = u_pos.y - v_windowCoords.y * u_sz.y / 2.0;
+  float zx=0.0;
+  float zy=0.0;
+  int ii=0;
+  for(int i=0; i<2048; i++){
+    float nzx = zx*zx - zy*zy + x;
+    float nzy = 2.0*zx*zy + y;
+    zx = nzx;
+    zy = nzy;
+    if((ii==0) && ((zx*zx+zy*zy)>100.0))
+      ii = i;
+  }
+  /*
+  float r = 0.5+atan(zx)/3.1415926535897932;
+  float g = 0.5+atan(zy)/3.1415926535897932;
+  float b = atan(float(ii)/10.0)/3.1415926535897932*2.0;
+  gl_FragColor = vec4(r,g,b,1.0);
+  */
+  float h,c,l;
+  if(ii==0){
+    h = atan(zy,zx)/3.1415926535897932*3.0+3.0;
+    c = 1.0;
+    l = 1.0-atan(sqrt(zx*zx+zy*zy))/3.1415926535897932*2.0;
+  }
+  else{
+    h = float(ii)/10.0;
+    c = atan(log(float(ii))-1.9)/3.14159265*2.0;
+    l = atan(log(float(ii))-1.9)/3.14159265*1.5;
+  }
+  vec3 rgb1;
+  vec3 cx0 = vec3(c,c*(1.0-abs(mod(h,2.0)-1.0)),0.0);
+  if     (h<1.0) rgb1.rgb = cx0.xyz;
+  else if(h<2.0) rgb1.rgb = cx0.yxz;
+  else if(h<3.0) rgb1.rgb = cx0.zxy;
+  else if(h<4.0) rgb1.rgb = cx0.zyx;
+  else if(h<5.0) rgb1.rgb = cx0.yzx;
+  else           rgb1.rgb = cx0.xzy;
+  float m = l-dot(vec3(.3,.59,.11),rgb1);
+  gl_FragColor = vec4(rgb1.r+m,rgb1.g+m,rgb1.b+m,1.0);
+}
+</script>
+<script type="x-shader/x-fragment" id="mandelbrot-fshader-int16">
+precision highp float;
+precision highp int;
+
+ivec4 fixadd(ivec4 x, ivec4 y){
+  
+}
+
+
+varying vec2 v_windowCoords;
+uniform vec2 u_pos;
+uniform vec2 u_sz;
+
+void main() {
+  float x = u_pos.x + v_windowCoords.x * u_sz.x / 2.0;
+  float y = u_pos.y - v_windowCoords.y * u_sz.y / 2.0;
+  float zx=0.0;
+  float zy=0.0;
+  int ii=0;
+  for(int i=0; i<2048; i++){
+    float nzx = zx*zx - zy*zy + x;
+    float nzy = 2.0*zx*zy + y;
+    zx = nzx;
+    zy = nzy;
+    if((ii==0) && ((zx*zx+zy*zy)>100.0))
+      ii = i;
+  }
+  /*
+  float r = 0.5+atan(zx)/3.1415926535897932;
+  float g = 0.5+atan(zy)/3.1415926535897932;
+  float b = atan(float(ii)/10.0)/3.1415926535897932*2.0;
+  gl_FragColor = vec4(r,g,b,1.0);
+  */
+  float h,c,l;
+  if(ii==0){
+    h = atan(zy,zx)/3.1415926535897932*3.0+3.0;
+    c = 1.0;
+    l = 1.0-atan(sqrt(zx*zx+zy*zy))/3.1415926535897932*2.0;
+  }
+  else{
+    h = float(ii)/10.0;
+    c = atan(log(float(ii))-1.9)/3.14159265*2.0;
+    l = atan(log(float(ii))-1.9)/3.14159265*1.5;
+  }
+  vec3 rgb1;
+  vec3 cx0 = vec3(c,c*(1.0-abs(mod(h,2.0)-1.0)),0.0);
+  if     (h<1.0) rgb1.rgb = cx0.xyz;
+  else if(h<2.0) rgb1.rgb = cx0.yxz;
+  else if(h<3.0) rgb1.rgb = cx0.zxy;
+  else if(h<4.0) rgb1.rgb = cx0.zyx;
+  else if(h<5.0) rgb1.rgb = cx0.yzx;
+  else           rgb1.rgb = cx0.xzy;
+  float m = l-dot(vec3(.3,.59,.11),rgb1);
+  gl_FragColor = vec4(rgb1.r+m,rgb1.g+m,rgb1.b+m,1.0);
+}
+</script>
+<style>
+  #canvases {
+    position: relative;
+    width: 600;
+    height: 600;
+  }
+  #glfractal {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 1;
+  }
+  #ui {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 2;
+  }
+  #controls {
+    float: left;
+  }
+</style>
+</head>
+<body>
+<div id="canvases">
+  <canvas id="ui" width=600 height=600></canvas>
+  <canvas id="glfractal" width=600 height=600></canvas>
+</div>
+<div id="controls">
+<p>
+  <table><tr>
+    <td>time to draw: </td>
+    <td id="time_to_draw"/>
+    <td><input type="button" value="draw fractal" id="button"/></td>
+    <td><input type="button" value="clear mouse box" id="clear_mouse_box"/></td>
+    <td><a id="save">save</a></td>
+  </tr></table>
+</p>
+<p>
+  <table><tr>
+    <td>xpos </td><td><input type="text" id="xpos" value="0"/></td>
+    <td>ypos </td><td><input type="text" id="ypos" value="0"/></td>
+  </tr><tr>
+    <td>xsz </td><td><input type="text" id="xsz" value="2"/></td>
+    <td>ysz </td><td><input type="text" id="ysz" value="2"/></td>
+  </tr><tr>
+    <td>xres </td><td><input type="text" id="xres" value="600"/></td>
+    <td>yres </td><td><input type="text" id="yres" value="600"/></td>
+  </tr></table>
+</p>
+<p>
+mediump <input type="radio" name="type" id="mediump" checked/>
+dekkerdouble <input type="radio" name="type" id="dekkerdouble"/>
+</p>
+<p>
+  ensure square pixels <input type="checkbox" id="ensure_square_pixels" checked/>
+</p>
+<p><table id="restoretable">
+<tr><td><input type="button" id="restore_params" value="restore:"/></td>
+    <td><input type="text" id="restore_params_params"/></td></tr>
+</table></p>
+</div>
+</body>
+</html>

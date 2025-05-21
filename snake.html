@@ -1,0 +1,452 @@
+<html><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  
+    <title>
+      .: asteroids :.
+    </title>
+    <script type="text/javascript">
+var makecanvas = function(){
+    var canvas = document.createElement("canvas")
+    canvas.id = "screen"
+    canvas.width = 500
+    canvas.height = 500
+    document.body.appendChild(canvas)
+}
+
+var G = 6.67300 * Math.pow(10,-11)
+
+// all values are mks and are supposed to represent the sun-mercury system
+var sol = {
+    m: 1.98892 * Math.pow(10,30),
+    r: 6.955*Math.pow(10,8),
+    x: 0,
+    y: 0
+}
+sol.r2 = sol.r*sol.r
+
+var mercury = {
+    m: 3.30200 * Math.pow(10,27),
+    x: 6.98169 * Math.pow(10,9),
+    r: 2.4397*Math.pow(10,8), //100x actual
+    y: 0,
+    xdot: 0,
+    ydot: 1.2 * Math.pow(10,5) //this is completely made up
+}
+mercury.r2 = mercury.r*mercury.r
+
+var ship = {
+    x: 0,
+    y: -5*Math.pow(10,9),
+    xdot: 18*Math.pow(10,4),
+    ydot: 0,
+    r: Math.pow(10,8), //absurdly large
+    orientation: 0,
+    shape: [6,0,-2,4,-2,-4,-2,0],
+    thruster: 3*Math.pow(10,3),
+    vernier: Math.PI,
+    blasterspeed: 3*Math.pow(10,5),
+    blasterttl: 300,
+    tractorbeam: 3*Math.pow(10,3) 
+}
+ship.r2 = ship.r * ship.r
+
+var snake = {
+    segsize: 20,
+    maxsegs: 20,
+    segs: []
+}
+
+var asteroidrange = 6*Math.pow(10,9)
+var asteroidmin = Math.pow(10,9)
+var asteroidr = Math.pow(10,8) //absurdly large
+var asteroidr2 = Math.pow(10,16)
+var asteroids = new Array()
+var makeasteroid = function(e){
+    var r = asteroidmin + Math.random()*asteroidrange
+    var theta = Math.random()*2*Math.PI
+    var c = Math.cos(theta)
+    var s = Math.sin(theta)
+    var speed = Math.sqrt(G*sol.m/r)
+    var asteroid = {
+	x: c*r,
+	y: -s*r,
+	xdot: s*speed,
+	ydot: c*speed,
+	r: asteroidr,
+	r2: asteroidr2,
+	asteroid: true
+    }
+    gravitatedstuff.push(asteroid)
+    hittablestuff.push(asteroid)
+    asteroids.push(asteroid)
+    document.getElementById("screen").focus()
+}
+
+var gravitatingstuff = [sol,mercury]
+var gravitatedstuff = [mercury,ship]
+var hittablestuff = [sol,mercury,ship]
+var tractorbeamtarget = null
+var tickseconds = 100
+var dophysics = function(){
+    for(var i=0; i<gravitatedstuff.length; i++){
+	var thing = gravitatedstuff[i]
+	thing.x = thing.x + thing.xdot*tickseconds
+	thing.y = thing.y + thing.ydot*tickseconds
+	for(var j=0; j<gravitatingstuff.length; j++){
+	    if(gravitatingstuff[j] == thing)
+		continue // auto-gravity is not calculated
+	    var rx = thing.x - gravitatingstuff[j].x
+	    var ry = thing.y - gravitatingstuff[j].y
+	    var r2 = (rx * rx + ry * ry)
+	    var r = Math.sqrt(r2)
+	    var a = -G * gravitatingstuff[j].m / r2
+	    var ax = a * rx / r
+	    var ay = a * ry / r
+	    thing.xdot = thing.xdot + ax*tickseconds
+	    thing.ydot = thing.ydot + ay*tickseconds
+	}
+    }
+    for(var i=0;i<keysdown.length;i++){
+	switch(keysdown[i]){
+	case "counterclockwise":
+	    ship.orientation += ship.vernier/tickmillis
+	    break
+	case "retrograde":
+	    ship.orientation -= ship.vernier/tickmillis
+	    break
+	case "thruster":
+	    ship.xdot += ship.thruster*Math.cos(ship.orientation)
+	    ship.ydot -= ship.thruster*Math.sin(ship.orientation)
+	    break
+	case "tractorbeam":
+	    if(tractorbeamtarget != null){
+		var x = tractorbeamtarget.x-ship.x
+		var y = tractorbeamtarget.y-ship.y
+		var r = Math.sqrt(x*x+y*y)
+		var c = x/r
+		var s = y/r
+		ship.xdot += c*ship.tractorbeam
+		ship.ydot += s*ship.tractorbeam
+		tractorbeamtarget.xdot -= c*ship.tractorbeam
+		tractorbeamtarget.ydot -= s*ship.tractorbeam
+	    }
+	}
+    }
+
+
+    var snqx = Math.floor((centerx+mtopix*mercury.x)/snake.segsize)
+    var snqy = Math.floor((centery+mtopix*mercury.y)/snake.segsize)
+    for(var i=0;i<snake.segs.length;i++)
+        if((snake.segs[i].x == snqx) && (snake.segs[i].y == snqy)){
+            snake.segs.splice(i,1)
+            snake.maxsegs--
+        }
+
+    if(snake.segs.length > 0){
+        var shx = snake.segs[snake.segs.length-1].x
+        var shy = snake.segs[snake.segs.length-1].y
+        for(var i=0;i<asteroids.length;i++){
+            var snqx = Math.floor((centerx+mtopix*asteroids[i].x)/snake.segsize)
+            var snqy = Math.floor((centery+mtopix*asteroids[i].y)/snake.segsize)
+            if((shx == snqx) && (shy == snqy)){
+                gravitatedstuff.splice(gravitatedstuff.indexOf(asteroids[i]),1)
+                hittablestuff.splice(hittablestuff.indexOf(asteroids[i]),1)
+                asteroids.splice(i,1)
+                snake.maxsegs++
+            }
+            for(var j=0;j<snake.segs.length-1;j++){
+                if((snqx == snake.segs[j].x) && (snqy == snake.segs[j].y)){
+                    var segcenterx = (snake.segs[j].x*snake.segsize+snake.segsize/2-centerx)/mtopix
+                    var segcentery = (snake.segs[j].y*snake.segsize+snake.segsize/2-centery)/mtopix
+                    var c1 = false
+                    var c2 = false
+                    if((asteroids[i].x - segcenterx) > (asteroids[i].y - segcentery))
+                        c1 = true
+                    if((asteroids[i].x - segcenterx) > -(asteroids[i].y - segcentery))
+                        c2 = true
+                    if(c1 && c2)
+                        if(asteroids[i].xdot < 0)
+                           asteroids[i].xdot = -asteroids[i].xdot
+                    if(!c1 && c2)
+                        if(asteroids[i].ydot < 0)
+                           asteroids[i].ydot = -asteroids[i].ydot
+                    if(!c1 && !c2)
+                        if(asteroids[i].xdot > 0)
+                           asteroids[i].xdot = -asteroids[i].xdot
+                    if(c1 && !c2)
+                        if(asteroids[i].ydot > 0)
+                           asteroids[i].ydot = -asteroids[i].ydot
+                }
+            }
+        }   
+    }
+    for(var i=0;i<bolts.length;i++){
+	bolts[i].ttl -= 1
+	if(bolts[i].ttl==0){
+	    gravitatedstuff.splice(gravitatedstuff.indexOf(bolts[i]),1)
+	    bolts.splice(i,1)
+	} else {
+	    for(var j=0;j<hittablestuff.length;j++){
+		var deltax = (bolts[i].x-hittablestuff[j].x)
+		var deltay = (bolts[i].y-hittablestuff[j].y)
+		var r2 = deltax*deltax + deltay*deltay
+		if(r2 < hittablestuff[j].r2){
+		    gravitatedstuff.splice(gravitatedstuff.indexOf(bolts[i]),1)
+		    bolts.splice(i,1)
+		    if(hittablestuff[j].asteroid){
+			gravitatedstuff.splice(gravitatedstuff.indexOf(hittablestuff[j]),1)
+			asteroids.splice(asteroids.indexOf(hittablestuff[j]),1)
+			hittablestuff.splice(j,1)
+		    }
+		    break
+		}
+	    }
+	
+            var snqx = Math.floor((centerx + mtopix*bolts[i].x)/snake.segsize)
+            var snqy = Math.floor((centerx + mtopix*bolts[i].y)/snake.segsize)
+            for(var j=0; j<snake.segs.length; j++)
+                if((snake.segs[j].x == snqx) && (snake.segs[j].y == snqy)){
+                    snake.segs.splice(j,1)
+                    snake.maxsegs--
+                }
+        }
+    }
+
+}
+
+bolts = new Array()
+var fire = function(){
+    var c = Math.cos(ship.orientation)
+    var s = Math.sin(ship.orientation)
+    var bolt = {
+	x: ship.x+ship.r*c,
+	y: ship.y-ship.r*s,
+	xdot: ship.xdot + ship.blasterspeed*c,
+	ydot: ship.ydot - ship.blasterspeed*s,
+	ttl: ship.blasterttl
+    }
+    bolts.push(bolt)
+    gravitatedstuff.push(bolt)
+}
+
+var pause = function(){
+// implement with a mutex later
+}
+
+var keysdown = new Array()
+var keydown = function(e){
+    var key = keys[String.fromCharCode(e.keyCode)]
+    if(key)
+	if(keysdown.indexOf(key) == -1)
+	    keysdown.push(key)
+    if(key=="tractorbeam"){
+	var mr2 = Math.pow(10,20)
+	for(var i=0; i<asteroids.length; i++){
+	    var x = asteroids[i].x-ship.x
+	    var y = asteroids[i].y-ship.y
+	    var r2 = x*x + y*y
+	    if(r2<mr2){
+		tractorbeamtarget = asteroids[i]
+		mr2 = r2
+	    }
+	}
+    }
+}
+
+var keyup = function(e){
+    var key = keys[String.fromCharCode(e.keyCode)]
+    if(key){
+	if(keysdown.indexOf(key) != -1)
+	    keysdown.splice(keysdown.indexOf(key),1)
+	switch(key){
+	case "blaster":
+	    fire()
+	    break
+	case "tractorbeam":
+	    tractorbeamtarget = null
+	    break
+	case "teleport":
+	    ship.x = 0
+	    ship.y = -screeny/2
+	    break
+	}
+    }
+}
+
+var setpref = function(e){
+    var key = String.fromCharCode(e.charCode).toUpperCase()
+    keys[key] = e.target.id
+    e.target.value = key
+    e.preventDefault()
+}
+
+var slither = function(e){
+    var r = canvas.getBoundingClientRect()
+    var x = Math.floor((e.clientX - r.left)/snake.segsize)
+    var y = Math.floor((e.clientY - r.top)/snake.segsize)
+    for(var i=0; i<snake.segs.length; i++)
+        if((snake.segs[i].x == x) && (snake.segs[i].y == y))
+            return
+    if(snake.segs.length > 0){
+        var s = snake.segs[snake.segs.length-1]  
+        if(!(s.x==x && ((s.y==y+1) || (s.y==y-1))) && !(s.y==y && ((s.x==x+1) || s.x==x-1)))
+            return
+    }
+    snake.segs.push({x:x,y:y})
+    while(snake.segs.length > snake.maxsegs)
+        snake.segs.shift()
+}
+
+var screenx = Math.pow(10,10)
+var screeny = Math.pow(10,10)
+var centerx = 0
+var centery = 0
+var mtopix = 0
+var drawstuff = function(){
+    var canvas = document.getElementById("screen")
+    var ctx = canvas.getContext("2d")
+    ctx.clearRect(0,0,canvas.width,canvas.height)
+
+    ctx.fillStyle = "rgb(255,200,0)"
+    ctx.beginPath()
+    ctx.arc(centerx,centery,mtopix*sol.r,0,2*Math.PI,true)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillStyle = "rgb(200,50,0)"
+    ctx.beginPath()
+    ctx.arc(centerx+mtopix*mercury.x,centery+mtopix*mercury.y,
+	    mtopix*mercury.r,0,2*Math.PI,true)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillStyle = "rgb(0,0,0)"
+    ctx.beginPath()
+    var c = Math.cos(ship.orientation)
+    var s = Math.sin(ship.orientation)
+    for(var i=0;i+1<ship.shape.length;i++){
+	if(i==0)
+	    ctx.moveTo(centerx+centerx*ship.x/screenx+c*ship.shape[i]+s*ship.shape[i+1],
+		       centery+centery*ship.y/screeny-s*ship.shape[i]+c*ship.shape[i+1])
+	else
+	    ctx.lineTo(centerx+centerx*ship.x/screenx+c*ship.shape[i]+s*ship.shape[i+1],
+		       centery+centery*ship.y/screeny-s*ship.shape[i]+c*ship.shape[i+1])
+    }
+    ctx.closePath()
+    ctx.fill()
+    if(keysdown.indexOf("thruster")!=-1){
+	ctx.fillStyle = "rgb(255,100,0)"
+	ctx.beginPath()
+	ctx.moveTo(centerx+centerx*ship.x/screenx+c*-2+s*2,
+		   centery+centery*ship.y/screeny-s*-2+c*2)
+	ctx.lineTo(centerx+centerx*ship.x/screenx+c*-2+s*-2,
+		   centery+centery*ship.y/screeny-s*-2+c*-2)
+    	ctx.lineTo(centerx+centerx*ship.x/screenx+c*-5+s*0,
+		   centery+centery*ship.y/screeny-s*-5+c*0)
+	ctx.closePath()
+	ctx.fill()
+    }
+    if(tractorbeamtarget != null){
+	ctx.strokeStyle = "rgb(127,0,255)"
+	ctx.moveTo(centerx+mtopix*ship.x,centery+mtopix*ship.y)
+	ctx.lineTo(centerx+mtopix*tractorbeamtarget.x,
+		   centery+mtopix*tractorbeamtarget.y)
+	ctx.stroke()
+    }
+    for(i=0;i<asteroids.length;i++){
+	ctx.fillStyle = "rgb(0,0,0)"
+	ctx.beginPath()
+	ctx.arc(centerx+mtopix*asteroids[i].x,centery+mtopix*asteroids[i].y,
+		mtopix*asteroids[i].r,0,2*Math.PI,true)
+	ctx.closePath()
+	ctx.fill()
+    }
+    for(i=0;i<bolts.length;i++){
+	ctx.fillStyle = "rgb(0,"+Math.ceil(255.0*bolts[i].ttl/200.0)+",0)"
+	ctx.beginPath()
+	ctx.arc(centerx+centerx*bolts[i].x/screenx,centery+centery*bolts[i].y/screeny,
+		2,0,2*Math.PI,true)
+	ctx.closePath()
+	ctx.fill()
+    }
+    for(i=0;i<snake.segs.length;i++){
+	ctx.fillStyle = "rgb("+Math.ceil(255.0*i/snake.maxsegs)+",0,0)"
+	ctx.beginPath()
+        var sx = snake.segs[i].x*snake.segsize
+        var sy = snake.segs[i].y*snake.segsize
+        ctx.rect(sx,sy,snake.segsize,snake.segsize)
+	ctx.fill()
+    }
+
+}
+
+var tickmillis = 50
+var runprogram = function(){
+    drawstuff()
+    dophysics()
+    setTimeout(function(){runprogram();},tickmillis)
+}
+
+var keys = {}
+window.onload = function(){
+    makecanvas()
+    var keyslist = ["counterclockwise", "retrograde", "thruster",
+		    "blaster", "tractorbeam", "teleport"]
+    for(i=0;i<keyslist.length;i++){
+	var keyinput = document.getElementById(keyslist[i])
+	keyinput.addEventListener("keypress",setpref,true)
+	keys[keyinput.value] = keyslist[i]
+    }
+    document.getElementById("makeasteroid").addEventListener("click",makeasteroid,false)
+    canvas = document.getElementById("screen")
+    canvas.addEventListener("keydown",keydown,true)
+    canvas.addEventListener("keyup",keyup,true)
+    canvas.addEventListener("mousemove",slither,true)
+    canvas.addEventListener("touchstart",slither,true)
+    canvas.addEventListener("touchend",slither,true)
+    canvas.addEventListener("blur",function(e){pause();},false)
+    canvas.tabIndex = 1
+    canvas.focus()
+    centerx = canvas.width/2
+    centery = canvas.height/2
+    mtopix = centerx/screenx
+    runprogram()
+}
+    </script>
+  </head><body>
+    <table>
+      <tbody>
+	<tr>
+	  <td>
+	    Counterclockwise:
+	    <input id="counterclockwise" value="J" type="text">
+	  </td>
+	  <td>
+	    Retrograde:
+	    <input id="retrograde" value="L" type="text">
+	  </td>
+	  <td>
+	    Thruster:
+	    <input id="thruster" value="I" type="text">
+	  </td>
+	</tr>
+	<tr>
+	  <td>
+	    Blaster:
+	    <input id="blaster" value="F" type="text">
+	  </td>
+	  <td>
+	    Tractor Beam:
+            <input id="tractorbeam" value="D" type="text">
+	  </td>
+	  <td>
+	    Wormhole:
+	    <input id="teleport" value="S" type="text">
+	  </td>
+	  <td>
+	    <input id="makeasteroid" value="Spawn Asteroid" type="button">
+	  </td>
+	</tr>
+      </tbody>
+    </table>
+    <canvas tabindex="1" height="500" width="500" id="screen"></canvas>
+  </body>
+</html>

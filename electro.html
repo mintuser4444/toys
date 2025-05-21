@@ -1,0 +1,268 @@
+<html><head><script>
+const ε = 1;
+const μ = 1;
+const c = 1/Math.sqrt(μ*ε);
+const coulomb = 1/(4*Math.PI*ε);
+const magnetic = μ/(4*Math.PI);
+
+cos = Math.cos;
+sin = Math.sin;
+PI = Math.PI;
+
+function rapidity(v){
+    return Math.arctanh(v/c);
+}
+
+function boost(Δẋ)
+{
+    for(var i=0; i<this.charges.length; i++){
+        q,x,ẋ = this.charges[i];
+        this.charges[i][2] = add(ẋ,Δẋ);
+    }
+}
+
+class System {
+    constructor(){
+        this.charges = [];
+    }
+    E(x){
+        var acc = vec(0,0,0);
+        for(var i=0; i<this.charges.length; i++){
+            var charge = this.charges[i];
+            var r = add(charge.x,neg(x));
+            var r2 = norm2(r);
+            var r3 = r2*Math.sqrt(r2);
+            var s = mul(charge.q,mul(coulomb,1/r3));
+            var Ei = mul(s,r);
+            acc = add(acc,Ei);
+        }
+        return acc;
+    }
+    B(x){
+        var acc = vec(0,0,0);
+        for(var i=0; i<this.charges.length; i++){
+            var charge = this.charges[i];
+            var r = add(charge.x,neg(x));
+            var r2 = norm2(r);
+            var rr = mul(r,1/Math.sqrt(r2));
+            var s = mul(charge.q,mul(magnetic,inv(r2)));
+            var Bi = mul(s,cross(charge.ẋ,rr));
+            acc = add(acc,Bi);
+        }
+        return acc;
+    }
+    addCharge(q,x,ẋ){
+        this.charges.push({q:q,x:x,ẋ,ẋ});
+    }
+}
+
+function norm2(x){
+    var acc = undefined;
+    for(var i=0; i<x.data.length; i++){
+        var s = mul(x.data[i],x.data[i]);
+        if(acc == undefined)
+            acc = s;
+        else
+            acc = add(acc,s);
+    }
+    return acc;
+}
+
+function vec(x,y,z,t){
+    if(is_a_value(t))
+      data = [x,y,z,t];
+    else
+      data = [x,y,z];
+    return {type:"vector",
+            data:data};
+}
+
+function mat(ci,cii,ciii,civ,cv,cvi,cvii,cviii,cix,cx,
+             cxi,cxii,cxiii,cxiv,cxv,cxvi){
+    if(is_a_value(cx)){
+        data = [ci,cii,ciii,civ,cv,cvi,cvii,cviii,cix,cx,
+                cxi,cxii,cxiii,cxiv,cxv,cxvi];
+        r = 4;
+    }
+    else {
+        data = [ci,cii,ciii,civ,cv,cvi,cvii,cviii,cix];
+        r = 3;
+    }
+    return {type:"matrix",
+            data:data,
+            r:r};
+}
+
+function get_type(x){
+    if(isFinite(x))
+      return "number";
+    return x.type;
+}
+
+function is_a_value(x){
+    if(isFinite(x))
+      return true;
+    return x?true:false;
+}
+
+
+ops = {};
+op2s = ["add","mul","cross"];
+op1s = ["neg","inv"];
+for(var i=0; i<op2s.length; i++){
+    const o = op2s[i];
+    window[o] = function(l,r){
+        var tl = get_type(l);
+        var tr = get_type(r);
+        if(!ops[o] || !ops[o][tl] || !ops[o][tl][tr])
+            console.log(o,tl,tr);
+        return ops[o][tl][tr](l,r);
+    }
+}
+for(var i=0; i<op1s.length; i++){
+    const o = op1s[i];
+    window[o] = function(x){
+        return ops[o][get_type(x)](x);
+    }
+}
+
+function add_op(o,t,sym,f){
+    if(!ops[o])
+        ops[o] = {};
+    if(!ops[o][t[0]])
+      if(!t[1]){
+        ops[o][t[0]] = f;
+        return;
+      }
+      else
+        ops[o][t[0]] = {};
+    ops[o][t[0]][t[1]] = f;
+    if(sym)
+      ops[o][t[1]][t[0]] = function(l,r){return f(r,l);};
+}
+
+add_op("neg",["number"],false,function(x){
+    return -x;
+});
+
+add_op("inv",["number"],false,function(x){
+    return 1/x;
+});
+
+add_op("neg",["vector"],false,function(x){
+    out = [];
+    for(var i=0; i<x.data.length; i++){
+        out.push(neg(x.data[i]));
+    }
+    return {type: "vector",
+            data: out};
+});
+
+add_op("add",["number","number"],false,function(l,r){
+    return l+r;
+});
+
+add_op("add",["vector","vector"],false,function(l,r){
+    var out = [];
+    for(var i=0; i<l.data.length; i++)
+        out.push(add(l.data[i],r.data[i]));
+    return {type: "vector",
+            data: out};
+});
+
+add_op("mul",["number","number"],false,function(l,r){
+    return l*r;
+});
+
+add_op("mul",["vector","number"],true,function(l,r){
+   out = [];
+   for(var i=0; i<l.data.length; i++){
+       out.push(mul(l.data[i],r));
+   } 
+   return {type:"vector",
+           data:out};
+});
+
+add_op("mul",["matrix","number"],true,function(l,r){
+   out = [];
+   for(var i=0; i<l.data.length/l.r; i++){
+       for(var j=0; j<l.r; j++){
+           out.push(l.data[i*l.r+j]*r);
+       }
+   }
+   return {type:"matrix",
+           data: out,
+           r: l.r};
+});
+
+add_op("mul",["matrix","vector"],false,function(l,r){
+    var out = [];
+    for(var i=0; i<l.data.length/l.r; i++){
+        var acc = undefined;
+        for(var j=0; j<l.r; j++){
+            var x = mul(l.data[i*l.r+j],r.data[j]);
+            if(acc == undefined)
+                acc = x;
+            else
+                acc = add(acc,x);
+        }
+        out.push(acc);
+    }
+    return {type:"vector",
+            data: out};
+});
+
+add_op("mul",["matrix","matrix"],false,function(l,r){
+    var out = [];
+    for(var i=0; i<l.data.length/l.r; i++){
+        for(var j=0; j<r.r; j++){
+            var acc = undefined;
+            for(var k=0; k<l.r; k++){
+                var x = mul(l.data[i*l.r+k],r.data[k*r.r+j])
+                if(acc == undefined)
+                  acc = x;
+                else
+                  acc = add(acc,x);
+            }
+            out.push(acc);
+        }
+    }
+    return {type: "matrix",
+            data: out,
+            r: l.r}
+});
+
+add_op("cross",["vector","vector"],false,function(l,r){
+    var ll = l.data;
+    var rr = r.data;
+    var out = [];
+    out.push(add(    mul(ll[1],rr[2]), neg(mul(ll[2],rr[1]))));
+    out.push(add(neg(mul(ll[0],rr[2])),    mul(ll[2],rr[0])));
+    out.push(add(    mul(ll[0],rr[1]), neg(mul(ll[1],rr[0]))));
+    return {type:"vector",
+            data:out};
+});
+
+v = vec(1,0,0);
+console.log(neg(v));
+console.log(add(v,v));
+s = new System();
+s.addCharge(1,vec(0,0,0),vec(0,0,1));
+console.log(s.E(vec(1,0,0)).data);
+console.log(s.B(vec(1,0,0)).data);
+t = new System();
+let N = 32;
+let s = .001;
+let cs = 2*PI/N;
+for(let i=0; i<N; i+=2){
+    let j = i+1;
+    t.addCharge(-1,vec(cos(i*cs),0,sin(i*cs)),vec(-sin(i*cs)*s,0,cos(i*cs)*s);
+    t.addCharge( 1,vec(cos(j*cs),0,sin(j*cs)),vec(0,0,0));
+}
+console.log(t.E(vec(0,0,0)).data);
+console.log(t.B(vec(0,0,0)).data);
+
+
+
+
+</script><body></body></html>

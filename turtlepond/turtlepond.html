@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+
+<head>
+<title>
+  .: turtle pond :.
+</title>
+<style type="text/css">
+.turtlepond
+{ width: 500px;
+  height: 500px;
+}
+</style>
+
+<script type="text/javascript">
+var pond = document.createElement("script");
+pond.src = "turtlepond.js";
+pond.onload = function(){
+  var screen = document.getElementById("turtlepond-screen");
+  startturtlepond(500,500,screen);
+};
+document.getElementsByTagName("head")[0].appendChild(pond);
+console.log("here");
+</script>
+</head>
+
+<body>
+  <canvas class="turtlepond" id="turtlepond-screen"/>
+</body>
+
+</html>

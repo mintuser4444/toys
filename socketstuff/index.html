@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+<title>.: turtle pond :.</title>
+<style type="text/css">
+.turtlepond
+{ width: 500px;
+  height: 500px;
+}
+
+.chatinfo
+{ color: grey;
+  font-size: small;
+}
+</style>
+<script type="text/javascript">
+var pond = document.createElement("script");
+pond.type = "text/javascript";
+pond.src = "turtlepond.js";
+pond.onload = function(){
+  var screen = document.getElementById("turtlepond-screen");
+  startturtlepond(500,500,screen);
+};
+document.getElementsByTagName("head")[0].appendChild(pond);
+</script>
+<script type="text/javascript">
+var chatclientjs = document.createElement("script");
+chatclientjs.type = "text/javascript";
+chatclientjs.src = "chatclient.js";
+chatclientjs.onload = function(){
+  var chatline = document.getElementById("chatline");
+  var chats = document.getElementById("chats");
+  chatclient(chatline, chats);
+};
+document.getElementsByTagName("head")[0].appendChild(chatclientjs);
+</script>
+</head>
+<body>
+<p><h1>Hello and welcome to my web site :)</h1></p>
+<p><h2>click to feed the turtles</h2></p>
+<p>don't feed them too much, there is limited space</p>
+<div class="turtlepond">
+  <canvas id="turtlepond-screen"/>
+</div>
+<div>
+  <p><a href="domtetris.html">play tetris</a></p>
+  <p><a href="fractal.html">explore the Mandelbrot set</a></p>
+  <p><a href="fragment.html">run arbitrary fragment shaders on images</a></p>
+</div>
+<div>
+  <p>chat with other visitors</p>
+  <p class="chatinfo">Chats are persistent, but will disappear after 15 minutes.  Set your nickname with "/nick yournick"</p>
+</div>
+<div>
+  <input id="chatline" type="text"/>
+</div>
+<div id="chats"/>
+</body>
+</html>

@@ -1,0 +1,357 @@
+<html><head><title>.: fractal :.</title>
+<script>
+var mousedownx;
+var mousedowny;
+var mousebox_xpos;
+var mousebox_ypos;
+var mousebox_xsz;
+var mousebox_ysz;
+var using_mousebox = false;
+var xpos;
+var ypos;
+var xsz;
+var ysz;
+var xres;
+var yres;
+
+var dothing = function(inxpos, inypos, inxsz, inysz, inxres, inyres){
+  var before = new Date();
+  if(inyres){
+    xres = inxres;
+    yres = inyres;
+    document.getElementById("xres").value = xres;
+    document.getElementById("yres").value = yres;
+  } else {
+    xres = Number(document.getElementById("xres").value);
+    yres = Number(document.getElementById("yres").value);
+  }
+  var canvas = document.getElementById ('fractal');
+  canvas.width = xres;
+  canvas.height = yres;
+  var uic = document.getElementById("ui");
+  uic.width = xres;
+  uic.height = yres;
+  var canvases = document.getElementById("canvases");
+  canvases.style["width"] = xres;
+  canvases.style["height"] = yres;
+  if(inyres){
+    clear_mouse_box();
+    xpos = inxpos;
+    ypos = inypos;
+    xsz = inxsz;
+    ysz = inysz;
+    document.getElementById("xpos").value = xpos;
+    document.getElementById("ypos").value = ypos;
+    document.getElementById("xsz").value = xsz;
+    document.getElementById("ysz").value = ysz;
+  }
+  if(using_mousebox)
+  { xpos = mousebox_xpos;
+    ypos = mousebox_ypos;
+    xsz = mousebox_xsz;
+    ysz = mousebox_ysz;
+    document.getElementById("xpos").value = xpos;
+    document.getElementById("ypos").value = ypos;
+    document.getElementById("xsz").value = xsz;
+    document.getElementById("ysz").value = ysz;
+    clear_mouse_box();
+  } else {
+    var pxpos = Number(document.getElementById("xpos").value);
+    var pypos = Number(document.getElementById("ypos").value);
+    var pxsz = Number(document.getElementById("xsz").value);
+    var pysz = Number(document.getElementById("ysz").value);
+    if(document.getElementById("ensure_square_pixels").checked){
+      if(pxsz/pysz != xres/yres){
+        non_square_pixel_alert();
+        return;
+      }
+    }
+    xpos = pxpos;
+    ypos = pypos;
+    xsz = pxsz;
+    ysz = pysz;
+  }
+  if(!inyres){
+    var newbutton = document.createElement("input");
+    newbutton.type = "button";
+    var str = " " + xpos + ", " + ypos + ", " + xsz + ", " + ysz + ", " + xres + ", " + yres;
+    newbutton.value = "restore: ";
+    console.log("dothing("+str+")");
+    // these need to be saved in different variables for the closure lol
+    var cxpos = xpos;
+    var cypos = ypos;
+    var cxsz = xsz;
+    var cysz = ysz;
+    var cxres = xres;
+    var cyres = yres;
+    newbutton.addEventListener("click", function(){dothing(cxpos,cypos,cxsz,cysz,cxres,cyres)});
+    var newtr = document.createElement("tr");
+    var newtd1 = document.createElement("td");
+    var newtd2 = document.createElement("td");
+    newtd1.appendChild(newbutton);
+    newtd2.textContent = str;
+    newtr.appendChild(newtd1);
+    newtr.appendChild(newtd2);
+    document.getElementById("restoretable").appendChild(newtr);
+  }
+  var sz = xsz;
+  if(ysz < sz)
+    sz = ysz;
+  var iter8 = Math.log(-Math.log(sz));
+  if(!isFinite(iter8))
+    iter8 = 1;
+  if(iter8 < 1)
+    iter8 = 1;
+  var baseiter = Number(document.getElementById("baseiter").value);
+  console.log(iter8);
+  var fptype;
+  var fptype_boxes = document.getElementsByClassName("fptype");
+  for(var i=0; i<fptype_boxes.length; i++){
+    if(fptype_boxes[i].checked)
+      fptype = fptype_boxes[i].value;
+  }
+  var colors = ["r", "g", "b", "h", "c", "l"];
+  var cfun = {};
+  for(var i=0; i<colors.length; i++)
+    cfun[colors[i]] = eval("(function(zx,zy){return " + document.getElementById(colors[i]).value + "})");
+  var cspace
+  if(document.getElementById("rgb").checked)
+    cspace = "rgb";
+  else
+    cspace = "hcl";
+  var icolors = ["ir","ig","ib"]
+  var ic = {};
+  for(var i=0; i<icolors.length; i++)
+    ic[icolors[i]] = eval(document.getElementById(icolors[i]));
+
+  var ctx = canvas.getContext("2d");
+  var img = ctx.createImageData(1,1);
+  var d = img.data;
+  var canvaswidth = canvas.width;
+  var canvasheight = canvas.height;
+  var iterct = baseiter*iter8;
+  for (var i=0; i <canvaswidth; i++)
+    for (var j=0; j <canvasheight;j++){
+      // Mandelbrot procedure.  x,y -> zx,zy
+      var x = xpos-xsz/2+xsz/canvaswidth*i;
+      var y = ypos-ysz/2+ysz/canvasheight*j;
+      var zx = 0;
+      var zy = 0;
+      for (var k=0; k<iterct; k++)
+      { var nx = zx*zx - zy*zy +x;
+        var ny=2*zx*zy +y;
+        zx = nx;
+        zy = ny;
+      }
+      var r; var g; var b;
+      if (!isFinite(zx)){
+        r=ic.ir;
+        g=ic.ig;
+        b=ic.ib;
+      }
+      else {
+        if(cspace == "rgb"){
+          r=cfun.r(zx,zy)*256;
+          g=cfun.g(zx,zy)*256;
+          b=cfun.b(zx,zy)*256;
+        }
+        else {
+          // hcl -> rgb algorithm from wikipedia
+          var h = cfun.h(zx,zy);
+          var c = cfun.c(zx,zy);
+          var l = cfun.l(zx,zy);
+          // h∈[-2π,∞) → hh∈[0,6)
+          var hh = ((h+2*Math.PI)%(2*Math.PI))/Math.PI*3;
+          var x = c*(1-Math.abs(hh%2-1));
+          var r1,g1,b1;
+          if     (hh<1){r1=c;g1=x;b1=0;}
+          else if(hh<2){r1=x;g1=c;b1=0;}
+          else if(hh<3){r1=0;g1=c;b1=x;}
+          else if(hh<4){r1=0;g1=x;b1=c;}
+          else if(hh<5){r1=x;g1=0;b1=c;}
+          else        {r1=c;g1=0;b1=x;}
+          var m = l-(.3*r1+.59*g1+.11*b1);
+          r = (r1+m)*256;
+          g = (g1+m)*256;
+          b = (b1+m)*256;
+        }
+      }
+      d[0] = r;
+      d[1] = g;
+      d[2] = b;
+      d[3] = 255;
+      ctx.putImageData( img, i, j);
+    }
+  var after = new Date();
+  document.getElementById("time_to_draw").innerHTML = (after-before)/1000;
+}
+
+window.onload = function(){
+  var canvas = document.getElementById("ui");
+  canvas.addEventListener("mousedown", function(e){
+    mousedownx = e.clientX;
+    mousedowny = e.clientY;
+    console.log(mousedownx,mousedowny);
+  });
+  canvas.addEventListener("mouseup", function(e){
+    console.log(e.clientX, e.clientY);
+    clear_mouse_box();
+    var xl, xh, yl, yh;
+    if(mousedownx < e.clientX){
+      xl = mousedownx;
+      xh = e.clientX;
+    } else if(e.clientX < mousedownx){
+      xl = e.clientX;
+      xh = mousedownx;
+    } else {
+      clear_mouse_box();
+      return;
+    }
+    if(mousedowny < e.clientY){
+      yl = mousedowny;
+      yh = e.clientY;
+    } else if(e.clientY < mousedowny){
+      yl = e.clientY;
+      yh = mousedowny;
+    } else {
+      clear_mouse_box();
+      return;
+    }
+
+    var xm = (xl+xh)/2;
+    var ym = (yl+yh)/2;
+    var xd = xh-xl;
+    var yd = yh-yl;
+
+    if(document.getElementById("ensure_square_pixels").checked){
+      var new_xres = Number(document.getElementById("xres").value);
+      var new_yres = Number(document.getElementById("yres").value);
+      if(xd/yd != new_xres/new_yres){
+        if(xd < yd)
+          xd = new_xres/new_yres*yd;
+        else
+          yd = new_yres/new_xres*xd;
+        xl = xm - xd/2;
+        xh = xm + xd/2;
+        yl = ym - yd/2;
+        yh = ym + yd/2;
+      }
+    }
+
+    var canvas = document.getElementById("ui");
+    var ctx = canvas.getContext("2d");
+    ctx.beginPath();
+    ctx.rect(xl,yl,xd,yd);
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+
+    mousebox_xpos = xpos + (xm/xres - 1/2) * xsz;
+    mousebox_ypos = ypos + (ym/yres - 1/2) * ysz;
+    mousebox_xsz = xsz * xd/xres;
+    mousebox_ysz = xsz * yd/yres;
+    using_mousebox = true;
+  });
+
+  document.getElementById("save").addEventListener("click", function(e){
+    e.target.href = document.getElementById("fractal").toDataURL();
+    e.target.download = "fractal.png";
+  });
+
+  dothing();
+};
+
+var clear_mouse_box = function(){
+  using_mousebox = false;
+  var canvas = document.getElementById("ui");
+  var ctx = canvas.getContext("2d");
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+}
+
+var non_square_pixel_alert = function(){
+  alert("If you want non-square pixels, uncheck the ensure square pixels setting.");
+}
+</script>
+<style>
+  #canvases {
+    position: relative;
+    width: 400;
+    height: 400;
+  }
+  #fractal {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 1;
+  }
+  #ui {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 2;
+  }
+  #controls {
+    float: left;
+  }
+</style>
+</head>
+<body>
+<div id="canvases">
+  <canvas id="fractal" height=400 width=400></canvas>
+  <canvas id="ui" height=400 width=400></canvas>
+</div>
+<div id="controls">
+<p>
+  <table><tr>
+    <td>time to draw: </td>
+    <td id="time_to_draw"/>
+    <td><input type="button" value="draw fractal" onclick="javascript:dothing()"/></td>
+    <td><input type="button" value="clear mouse box" onclick="javascript:clear_mouse_box()"/></td>
+    <td><a id="save">save</a></td>
+  </tr></table>
+</p>
+<p>
+  <table><tr>
+    <td>xpos </td><td><input type="text" id="xpos" value="0"/></td>
+    <td>ypos </td><td><input type="text" id="ypos" value="0"/></td>
+  </tr><tr>
+    <td>xsz </td><td><input type="text" id="xsz" value="2"/></td>
+    <td>ysz </td><td><input type="text" id="ysz" value="2"/></td>
+  </tr><tr>
+    <td>xres </td><td><input type="text" id="xres" value="400"/></td>
+    <td>yres </td><td><input type="text" id="yres" value="400"/></td>
+  </tr></table>
+</p>
+<p>
+  ensure square pixels <input type="checkbox" id="ensure_square_pixels" checked/>
+</p>
+<p>
+  if it looks weird, increase iteration count.  If you get blocky pixels, you've reached the limts
+  of double precision.  WebGL version with better precision forthcoming <a href="fractal-webgl.html">(preview with worse precision)</a>.
+  <table><tr><td>base iteration</td><td><input type="text" id="baseiter" value="100"/></td></tr></table>
+</p>
+<p>
+  all color functions take zx and zy and return a component from 0 to 1, except for h, which is an angle in radians
+  <table><tr>
+    <td>rgb<input type="radio" name="colorspace" id="rgb"/></td>
+    <td>hcl<input type="radio" name="colorspace" checked/></td>
+  </tr><tr>
+    <td>r<input type="text" id="r" value="1/2+Math.atan(zx)/Math.PI"/></td>
+    <td>h<input type="text" id="h" value="Math.atan2(zy,zx)"/></td>
+  </tr><tr>
+    <td>g<input type="text" id="g" value="1/2+Math.atan(zy)/Math.PI"/></td>
+    <td>c<input type="text" id="c" value="1"/></td>
+  </tr><tr>
+    <td>b<input type="text" id="b" value="0"/></td>
+    <td>l<input type="text" id="l" value="1-Math.atan(Math.sqrt(zx*zx+zy*zy))/Math.PI*2"/></td>
+  </tr></table>
+</p>
+<p>infinity color
+  <table><tr>
+    <td><input type="text" id="ir" value="0"/></td>
+    <td><input type="text" id="ig" value="0"/></td>
+    <td><input type="text" id="ib" value="0"/></td>
+  </tr></table>
+</p>
+<p><table id="restoretable"></table></p>
+</div>
+</body></html>

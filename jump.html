@@ -1,0 +1,751 @@
+
+<html>
+<meta charset="utf-8" />
+<head>
+<title>.: jump :.</title>
+<script id="vertexshader" type="x-shader/x-vertex">
+attribute vec4 a_vertex;
+
+uniform mat4 u_matrix;
+
+void main() {
+  gl_Position = u_matrix * a_vertex;
+}
+</script>
+<script id="fragmentshader" type="x-shader/x-fragment">
+precision mediump float;
+
+uniform vec4 u_objPallor;
+
+void main() {
+    gl_FragColor = u_objPallor;
+}
+</script>
+<script>
+var tickmillis = 50;
+var keys = {};
+var keyslist = ["forward", "backward", "left", "right", "lookleft", "lookright", "lookup", "lookdown","jump","crouch","shoot"];
+var keysdown = [];
+var cheats = ["noclip","fly"];
+var screen;
+var gl;
+var thingsmade = 0;
+var objects = [];
+var glbuffers = {};
+var constraints = {};
+var player = {set pos(v){ for(var i=0; i<3; i++) if(isNaN(v[i])) throw new Error("illegal assignment"); this._pos=v;},
+              set vel(v){ for(var i=0; i<3; i++) if(isNaN(v[i])) throw new Error("illegal assignment"); this._vel=v;},
+              get pos(){return this._pos;},
+              get vel(){return this._vel;},
+              _pos: [0,0,0],
+              _vel: [0,0,0],
+              bbx: [1,3,1],
+
+              mass: 100,
+              walk_force: 1000,
+
+              θ:Math.PI,
+              φ:Math.PI/2,
+              noclip:false,
+              fly:false,
+              touching_surface_last_tick:false,
+              on_floor: false,
+              floor: [],
+              floor_normal: [0,1,0]};
+var rotate_speed = 1;
+var move_speed = 3;
+var g = -1;
+var μ = .5;
+var min_climb = 1/6*Math.PI;
+var max_climb = 1/3*Math.PI;
+
+var makeworld = function(){
+//    maketetra(.3,.3,.5);
+    makebox(0,-10,  0, 20,5,20, 0,0,0);
+    makebox(0, -10, 25, 20,5,20, 0,0,0);
+    makebox(0,  -5, 80, 20,5,20, 0,0,0);
+    makebox(0,  0, 160, 20,5,20, 0,0,0);
+    maketetra(0,20,0);
+    maketetra(0,-20,0);
+    maketetra(-20,0,0);
+    maketetra(20,0,0);
+    maketetra(0,0,20);
+    maketetra(0,0,-20);
+    maketetra(20,20,0);
+    maketetra(0,20,20);
+}
+
+var boxvertices = function(x,y,z,rx,ry,rz){
+    return [[x-rx,y-ry,z-rz,],//0
+            [x-rx,y-ry,z+rz,],//1
+            [x-rx,y+ry,z+rz,],//2
+            [x-rx,y+ry,z-rz,],//3
+            [x+rx,y+ry,z-rz,],//4
+            [x+rx,y-ry,z-rz,],//5
+            [x+rx,y-ry,z+rz,],//6
+            [x+rx,y+ry,z+rz]];//7
+}
+
+var flatten = function(ll)
+{ l = [];
+  for(var i=0; i<ll.length; i++)
+    for(var j=0; j<ll[i].length; j++)
+      l.push(ll[i][j]);
+  return l;
+}
+
+var makebox = function(x,y,z, rx,ry,rz, e1,e2,e3){
+  var boxxi = thingsmade;
+  thingsmade++;
+  objects.push(boxxi);
+  var v = boxvertices(x,y,z,rx,ry,rz);
+  polys = [[v[0],v[1],v[3]]//-x
+           ,[v[2],v[3],v[1]]
+           ,[v[5],v[4],v[6]]//+x
+           ,[v[7],v[6],v[4]]
+           ,[v[0],v[5],v[1]]//-y
+           ,[v[6],v[1],v[5]]
+           ,[v[7],v[4],v[2]]//+y
+           ,[v[3],v[2],v[4]]
+           ,[v[0],v[3],v[5]]//-z
+           ,[v[4],v[5],v[3]]
+           ,[v[7],v[6],v[2]]//+z
+           ,[v[1],v[2],v[6]]
+          ];
+  constraints[boxxi] = polys;
+  var glb = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, glb);
+  var data = new Float32Array(flatten(flatten(polys)));
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  glbuffers[boxxi] = {buf: glb, count: data.length/3};
+}
+
+var maketetra = function(x,y,z){
+  var thingi = thingsmade;
+  thingsmade++;
+  objects.push(thingi);
+  var glb = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, glb);
+  var data = new Float32Array([x  ,  y,  z,    x+1,y  ,  z  ,    x  ,y+1,z  ,
+                               x  ,  y,  z,    x+1,y  ,  z  ,    x  ,y  ,z+1,
+                               x  ,  y,  z,    x  ,y+1,  z  ,    x  ,y  ,z+1,
+                               x+1,  y,  z,    x  ,y+1,  z  ,    x  ,y  ,z+1]);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  glbuffers[thingi] = {buf: glb, count:data.length/3};
+}
+
+var dostuff = function(){
+  var ticklen = (timeThisTick - timeLastTick)/1000;
+  //input
+  player.intended_move_direction_fb = 0;
+  player.intended_move_direction_rl = 0;
+  for(var i=0; i<keysdown.length; i++){
+    if(keysdown[i] == "lookup"){
+      player.φ += rotate_speed * ticklen;
+      if(player.φ>Math.PI)
+        player.φ = Math.PI;
+    }
+    if(keysdown[i] == "lookdown"){
+      player.φ -= rotate_speed * ticklen;
+      if(player.φ<0)
+        player.φ = 0;
+    }
+    if(keysdown[i] == "lookleft"){
+      player.θ += rotate_speed * ticklen;
+      if(player.θ>2*Math.PI)
+        player.θ -= 2*Math.PI;
+    }
+    if(keysdown[i] == "lookright"){
+      player.θ -= rotate_speed * ticklen;
+      if(player.θ<0)
+        player.θ += 2*Math.PI;
+    }
+    if(keysdown[i] == "shoot"){
+      shellvel = [10*Math.cos(player.φ)*Math.cos(player.θ),
+                  10*Math.sin(player.φ),
+                  10*Math.cos(player.φ)*Math.sin(player.θ)];
+      projectiles.append({shotby:"player",
+                          pos:player.pos,
+                          vel:vadd(player.vel,shellvel)})
+    }
+    if(player.touching_surface_last_tick || player.fly || player.noclip){
+      if(keysdown[i] == "forward")
+        player.intended_move_direction_fb++;
+      if(keysdown[i] == "backward")
+        player.intended_move_direction_fb--;
+      if(keysdown[i] == "left")
+        player.intended_move_direction_rl++;
+      if(keysdown[i] == "right")
+        player.intended_move_direction_rl--;
+
+/*      if(keysdown[i] == "forward"){
+        player.vel[2] += Math.cos(player.θ+Math.PI)*move_speed * ticklen;
+        player.vel[0] += Math.sin(player.θ+Math.PI)*move_speed * ticklen;
+      }
+      if(keysdown[i] == "backward"){
+        player.vel[2] += Math.cos(player.θ)*move_speed * ticklen;
+        player.vel[0] += Math.sin(player.θ)*move_speed * ticklen;
+      }
+      if(keysdown[i] == "left"){
+        player.vel[2] += Math.cos(player.θ+3*Math.PI/2)*move_speed * ticklen;
+        player.vel[0] += Math.sin(player.θ+3*Math.PI/2)*move_speed * ticklen;
+      }
+      if(keysdown[i] == "right"){
+        player.vel[2] += Math.cos(player.θ+Math.PI/2)*move_speed * ticklen;
+        player.vel[0] += Math.sin(player.θ+Math.PI/2)*move_speed * ticklen;
+      }*/
+      if(keysdown[i] == "jump"){
+        if(player.noclip || player.fly){
+          player.pos[0] += Math.cos(player.φ)*Math.cos(player.θ)*move_speed*ticklen;
+          player.pos[1] += Math.sin(player.φ)*move_speed*ticklen;
+          player.pos[2] += Math.cos(player.φ)*Math.sin(player.θ)*move_speed*ticklen;
+        } else
+          player.jumping = true;
+      }
+      if(keysdown[i] == "crouch"){
+        if(player.noclip || player.fly){
+          player.pos[0] -= Math.cos(player.φ)*Math.cos(player.θ)*move_speed*ticklen;
+          player.pos[1] -= Math.sin(player.φ)*move_speed*ticklen;
+          player.pos[2] -= Math.cos(player.φ)*Math.sin(player.θ)*move_speed*ticklen;
+        }
+      }
+    }
+  }
+  if(player.intended_move_direction_fb==0&&player.intended_move_direction_rl==0)
+    player.intended_move_direction = -1;
+  if(player.intended_move_direction_fb >0&&player.intended_move_direction_rl==0)
+    player.intended_move_direction =  0;
+  if(player.intended_move_direction_fb >0&&player.intended_move_direction_rl >0)
+    player.intended_move_direction =  1;
+  if(player.intended_move_direction_fb==0&&player.intended_move_direction_rl >0)
+    player.intended_move_direction =  2;
+  if(player.intended_move_direction_fb <0&&player.intended_move_direction_rl >0)
+    player.intended_move_direction =  3;
+  if(player.intended_move_direction_fb <0&&player.intended_move_direction_rl==0)
+    player.intended_move_direction =  4;
+  if(player.intended_move_direction_fb <0&&player.intended_move_direction_rl <0)
+    player.intended_move_direction =  5;
+  if(player.intended_move_direction_fb==0&&player.intended_move_direction_rl <0)
+    player.intended_move_direction =  6;
+  if(player.intended_move_direction_fb >0&&player.intended_move_direction_rl <0)
+    player.intended_move_direction =  7;
+
+
+  //simulation
+  var touching_surface = false;
+  var vvec = vsmul(player.vel, ticklen);
+  if(!player.noclip){
+    var collide;
+    var ccorner;
+    reset_exclusion:
+    while(true){
+      playercorners = boxvertices(player.pos[0],player.pos[1]-1,player.pos[2],player.bbx[0],player.bbx[1],player.bbx[2]);
+
+      for(var i=0; i<objects.length; i++){
+        var id = objects[i];
+        if(!constraints[id])
+        	continue;
+        for(var j=0; j<constraints[id].length; j++)
+          for(boundcorner=0; boundcorner < 8; boundcorner++)
+          { var pcv = vsub(playercorners[boundcorner],player.pos);
+            var t = collide_segment_triangle(player.pos,
+                                             pcv,
+                                             constraints[id][j]);
+            if(t != -1){
+              var tri = constraints[id][j];
+              var v1  = vsub(tri[1],tri[0]);
+              var v2  = vsub(tri[2],tri[0]);
+              var n   = vcross(v1,v2);
+              var nh  = vsmul(n,1/Math.sqrt(vdot(n,n)));
+              var xv  = vsmul(nh,vdot(vsmul(pcv,t-1),nh));
+              player.pos = vadd(player.pos,xv);
+              player.vel = vsub(player.vel,vsmul(nh,vdot(player.vel,nh)));
+              console.log("Excluding player from surface (" + id + ", " + j + ")" + "adding to position " + xv);
+              if(vdot(xv,xv) != 0)
+                continue reset_exclusion;
+            }
+          }
+        for(var j=0; j<constraints[id].length; j++)
+          for(boundcorner=0; boundcorner < 8; boundcorner++)
+          { var t = collide_segment_triangle(playercorners[boundcorner],
+                                             vvec,
+                                             constraints[id][j]);
+            if(t == -1)
+              continue;
+            console.log("segment " + boundcorner + " (" +
+                        playercorners[boundcorner][0] + ", " +
+                        playercorners[boundcorner][1] + ", " +
+                        playercorners[boundcorner][2] + ") + <"+
+                        vvec[0] + ", " + vvec[1] + ", " + vvec[2] + ">" +
+                        " has t=" + t);
+            touching_surface = true;
+            vvec = vsmul(vvec, t);
+            collide = constraints[id][j];
+            ccorner = playercorners[boundcorner];
+            console.log("player in pre-collide with triangle " + j + " of object " + id);
+          }
+      }
+      player.on_floor = false;
+      if(touching_surface)
+      { console.log("touching surface " + collide + " with corner " + ccorner);
+        var v1 = vsub(collide[1],collide[0]);
+        var v2 = vsub(collide[2],collide[0]);
+        var n = vcross(v1,v2);
+        var dv = vdot(player.vel,n);
+        var dp = vdot(vsub(player.pos,collide[0]),n); // player.pos as a point inside the bounding box
+        console.log(dv,dp);
+        if(Math.sign(dv) != Math.sign(dp)) // make sure player is outside of surface
+        { var nr2 = vdot(n,n);
+          if(Math.sign(vdot(dp,n))==-1)
+            n = vsmul(n,-1/Math.sqrt(nr2));
+          else
+            n = vsmul(n, 1/Math.sqrt(nr2));
+          console.log("surface normal: "+n);
+          var normalvels = vdot(player.vel,n);
+          var normalvel = vsmul(n,normalvels);
+          var perpvel = vsub(player.vel,normalvel);
+
+          var initialspeed = Math.sqrt(vdot(player.vel,player.vel));
+          // cancel player's velocity into the triangle
+          if(normalvels > 0)
+            player.vel = vsub(player.vel, normalvel);
+          // exert drag
+          var perps = Math.sqrt(vdot(perpvel,perpvel));
+          if(perps != 0){
+            fforce = (normalvels<0?-normalvels:normalvels)*μ;
+            var perpsf = (perps - fforce)/perps;
+            if(perpsf < 0)
+              perpsf = 0;
+            player.vel = vsub(player.vel,vsmul(perpvel,1-perpsf));
+          }
+          var deltas = Math.sqrt(vdot(player.vel,player.vel)) - initialspeed;
+          console.log("player collided with triangle " + j + " of object " + id + " speed changed by " );
+          //push player to surface now?
+          if(vdot(n,[0,1,0])>0){
+            player.on_floor = true;
+            player.floor = collide;
+            player.floor_normal = n;
+          }
+        }
+      }
+      player.touching_surface_last_tick = touching_surface;
+      break;
+    }
+  }
+  if(player.on_floor){
+    var intended_direction;
+    if(player.intended_move_direction != -1)
+      intended_direction = [-Math.sin(player.θ+player.intended_move_direction*2*Math.PI/8),
+                             0,
+                            -Math.cos(player.θ+player.intended_move_direction*2*Math.PI/8)];
+    else
+      intended_direction = [0,0,0];
+    var ndoti = vdot(player.floor_normal, intended_direction);
+    var ndotup = vdot(player.floor_normal, [0,1,0]);
+    var acceldir = vsub(intended_direction,vsmul(player.floor_normal,ndoti));
+    var adl = Math.sqrt(vdot(acceldir,acceldir));
+    if(adl != 0){
+      acceldir = vsmul(vnormalize(acceldir),move_speed);
+      var diff = vsub(acceldir, player.vel);
+      var diffs = Math.sqrt(vdot(diff,diff));
+      var accels = player.walk_force / player.mass * ticklen;
+      // maybe should avoid slowing down when running downhill
+      if(accels > diffs)
+        player.vel = vadd(player.vel,diff);
+      else
+        player.vel = vadd(player.vel,vsmul(diff,accels/diffs));
+    }
+    var slipping = [0,0,0];
+    if(ndotup < .72) // a bit more than 45⁰ slope
+      slipping = vsub(player.floor_normal,[0,ndotup,0]);
+    slipping = vsmul(slipping, ticklen);
+    player.vel = vadd(player.vel, slipping);
+  }
+  if(!(player.on_floor || player.fly || player.noclip))
+    player.vel[1] += g*ticklen;
+  player.pos = vadd(player.pos,vsmul(player.vel,ticklen));
+  if(player.touching_surface_last_tick)
+    console.log(player.pos,player.vel);
+  if(isNaN(player.pos[0]))
+    makedebugtag();
+}
+
+
+// returns t such that l0+t*lv ∈ triangle with vertices trivert
+// or -1
+var collide_segment_triangle = function(l0,lv,trivert){
+  //console.log("collide_segment_triangle");
+  var v1 = vsub(trivert[1],trivert[0]);
+  var v2 = vsub(trivert[2],trivert[0]);
+  var v3 = vsub(l0,trivert[0]);
+  var n = vcross(v1,v2);
+  //console.log(v1);
+  //console.log(v2);
+  //console.log(v3);
+  //console.log(n);
+  var a = vdot(lv,n);
+  var b = vdot(v3,n);
+  //console.log(a,b);
+  var coll = 0;
+  var v4;
+  if((a != 0) && (b != 0)){ // non-parallel velocity && point not in plane
+    coll = -b/a;
+    //console.log(coll);
+    if((coll < 0) || (coll > 1))
+      return -1;
+    v4 = vsub(vadd(vsmul(lv,coll),l0),trivert[0]);
+  }
+  else
+    if(b == 0){ // point in plane
+      v4 = v3;
+    }
+    else // parallel velocity, point not in plane
+      return -1;
+  //console.log(v4);
+  var d11 = vdot(v1,v1);
+  var d22 = vdot(v2,v2);
+  var d12 = vdot(v1,v2);
+  var d14 = vdot(v1,v4);
+  var d24 = vdot(v2,v4);
+  var det = d11*d22-d12;
+  var c1 = (d14*d22-d24*d12)/det;
+  var c2 = (d24*d11-d14*d12)/det;
+  //console.log(d11,d12,d22,d14,d24);
+  //console.log(c1,c2);
+  if((c1 < 0) || (c1 > 1))
+    return -1;
+  if(c2 < 0)
+    return -1;
+  if(c1 + c2 > 1)
+    return -1;
+  return coll;
+}
+
+// seriously?  this is how i have to implement it?
+var vsmul = function(v,s){
+  var v2 = [];
+  for(var i=0; i<v.length; i++)
+    v2[i] = v[i]*s;
+  return v2;
+}
+
+var vadd = function(v1,v2){
+  var out = [];
+  var ml = Math.min(v1.length,v2.length);
+  for(var i=0; i<ml; i++)
+    out[i] = v1[i] + v2[i];
+  return out;
+}
+
+var vsub = function(v1,v2){
+  var out = [];
+  var ml = Math.min(v1.length,v2.length);
+  for(var i=0; i<ml; i++)
+    out[i] = v1[i] - v2[i];
+  return out;
+}
+
+var vdot = function(v1,v2){
+  var acc = 0;
+  for(var i=0; i<v1.length; i++)
+    acc += v1[i] * v2[i];  return acc;
+
+}
+
+var vnormalize = function(v){
+  var r2 = vdot(v,v);
+  var nf = 1/Math.sqrt(r2);
+  if(!isFinite(nf)){
+    throw new Error("can't normalize zero vector");
+  }
+  var out = [];
+  for(var i=0; i<v.length; i++)
+    out[i] = nf*v[i];
+  return out;
+}
+
+var vnormalizeOrZero = function(v){
+  var r2 = vdot(v,v);
+  var nf = 1/Math.sqrt(r2);
+  if(!isFinite(nf)){
+    nf=1;
+  }
+  var out = [];
+  for(var i=0; i<v.length; i++)
+    out[i] = nf*v[i];
+  return out;
+}
+
+var vcross = function(p,q){
+  var out = [];
+  out[0] = p[1]*q[2]-p[2]*q[1];
+  out[1] = p[2]*q[0]-p[0]*q[2];
+  out[2] = p[0]*q[1]-p[1]*q[0];
+  return out;
+}
+
+var mmulf16 = function(a,b){
+  var c = new Float32Array(16);
+  for(var i=0; i<4; i++)
+    for(var j=0; j<4; j++){
+      c[i+4*j] = 0;
+      for(var k=0; k<4; k++)
+        c[i+4*j] += a[i+4*k] * b[k+4*j];
+    }
+  return c;
+}
+
+var mmulf16l = function(l){
+  var acc = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+  for(var i=0; i<l.length; i++)
+    acc = mmulf16(acc,l[i]);
+  return acc;
+}
+
+var playerview = function(fov,ar){
+  var f = fov*Math.PI/180;
+  var near = .5;
+  var far = 200;
+  var m33 = (-far-near)/(far-near);
+  var m34 = -2*far*near/(far-near);
+  var proj = new Float32Array([f, 0,   0,   0,
+                               0, f/ar,0,   0,
+                               0, 0,   m33, m34,
+                               0, 0,  -1,   0]);
+  var c = Math.cos(player.θ);
+  var s = Math.sin(player.θ);
+  var r1 = new Float32Array([ c,0,s,0,
+                              0,1,0,0,
+                             -s,0,c,0,
+                              0,0,0,1]);
+  var c = Math.cos(player.φ);
+  var s = Math.sin(player.φ);
+  var r2 = new Float32Array([ 1, 0,0,0,
+                              0, s,c,0,
+                              0,-c,s,0,
+                              0, 0,0,1]);
+  var xlat = new Float32Array([1,0,0,0,
+                               0,1,0,0,
+                               0,0,1,0,
+                               -player.pos[0],-player.pos[1],-player.pos[2],1]);
+  return mmulf16l([proj,r2,r1,xlat]);
+}
+
+var shade;
+var attribvertexloc;
+var viewmatloc;
+var objPallorLoc;
+var makescreen = function(){
+    screen = document.getElementById("screen");
+    gl = screen.getContext("webgl");
+    shade = make_shader_program("fragmentshader","vertexshader");
+    attribvertexloc = gl.getAttribLocation(shade,"a_vertex");
+    viewmatloc = gl.getUniformLocation(shade, "u_matrix");
+    objPallorLoc = gl.getUniformLocation(shade, "u_objPallor");
+}
+
+var debugtag = false;
+var drawstuff = function(){
+    viewmatrix = playerview(75,screen.clientWidth/screen.clientHeight);
+    gl.clearColor(.7,1,1,1);
+    //gl.enable(gl.DEPTH_TEST);
+    //gl.depthFunc(gl.LEQUAL);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(shade);
+    gl.uniformMatrix4fv(viewmatloc, false, viewmatrix);
+    var green = new Float32Array([0,.9,.4,1]);
+    gl.uniform4fv(objPallorLoc,green);
+    for(var i=0; i<objects.length; i++){
+      gl.bindBuffer(gl.ARRAY_BUFFER,glbuffers[objects[i]].buf);
+      gl.enableVertexAttribArray(attribvertexloc);
+      gl.vertexAttribPointer(attribvertexloc, 3, gl.FLOAT, false, 0, 0);
+      gl.uniformMatrix4fv(viewmatloc, false, viewmatrix);
+      gl.uniform4fv(objPallorLoc, green);
+      gl.drawArrays(gl.TRIANGLES,0,glbuffers[objects[i]].count);
+    }
+    if(debugtag)
+    { debugtag.innerHTML = JSON.stringify(player);
+    }
+}
+
+var makedebugtag = function(){
+  if(debugtag)
+    return;
+  debugtag = document.createElement('p');
+  document.body.appendChild(debugtag);
+}
+
+var resetpos = function(){player.pos = [0,0,0];player.vel=[0,0,0];}
+
+var setpref = function(e){
+    keys[e.charCode] = e.target.id;
+    e.target.value = String.fromCharCode(e.charCode).toUpperCase();
+    e.preventDefault();
+}
+
+var setcheat = function(e){
+  player[e.target.id] = e.target.checked;
+}
+
+var keydown = function(e){
+    var key = keys[String.fromCharCode(e.keyCode).toUpperCase()];
+    if(key && keysdown.indexOf(key) == -1)
+      keysdown.push(key);
+}
+
+var keyup = function(e){
+    var key = keys[String.fromCharCode(e.keyCode).toUpperCase()];
+    if(key && keysdown.indexOf(key) != -1)
+          keysdown.splice(keysdown.indexOf(key),1);
+}
+
+var mousemove = function(e){}
+
+var pause = function(){
+//  stop = true;
+}
+
+var resume = function(){
+  stop = false;
+  runprogram();
+}
+
+var stop = false;
+var timeLastTick;
+var timeThisTick;
+var runprogram = function(time){
+  if(typeof(time) == "undefined"){
+    timeLastTick = performance.now();
+    timeThisTick = performance.now();
+  } else {
+    timeLastTick = timeThisTick;
+    timeThisTick = time;
+  }
+  dostuff();
+  drawstuff();
+  if(!stop)
+    requestAnimationFrame(runprogram);
+}
+
+
+window.onload = function(){
+    makescreen();
+    makeworld();
+
+    for(i=0; i<keyslist.length; i++){
+      var keyinput = document.getElementById(keyslist[i]);
+      keyinput.addEventListener("keypress", setpref, true);
+      keys[keyinput.value] = keyslist[i];
+    }
+    for(var i=0; i<cheats.length; i++){
+      var cheatinput = document.getElementById(cheats[i]);
+      cheatinput.addEventListener("click", setcheat, true);
+      player[cheats[i]] = cheatinput.checked;
+    }
+
+    screen.addEventListener("keydown", keydown, true);
+    screen.addEventListener("keyup", keyup, true);
+    screen.addEventListener("mousemove", mousemove, true);
+    screen.addEventListener("blur", pause, false);
+    screen.tabIndex = 1;
+    screen.focus();
+    makedebugtag();
+    runprogram();
+}
+
+var make_shader_program = function(fss,vss){
+    var fshader = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fshader, document.getElementById(fss).text);
+    gl.compileShader(fshader);
+    if(!gl.getShaderParameter(fshader,gl.COMPILE_STATUS)){
+      console.log("Error compiling fragment shader");
+      console.log(gl.getShaderInfoLog(fshader));
+    }
+    var vshader = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vshader, document.getElementById(vss).text);
+    gl.compileShader(vshader);
+    if(!gl.getShaderParameter(vshader,gl.COMPILE_STATUS)){
+      console.log("Error compiling vertex shader");
+      console.log(gl.getShaderInfoLog(vshader));
+    }
+    var program = gl.createProgram();
+    gl.attachShader(program,fshader);
+    gl.attachShader(program,vshader);
+    gl.linkProgram(program);
+    if(!gl.getProgramParameter(program,gl.LINK_STATUS))
+      console.log(gl.getProgramInfoLog(program));
+    return program;
+}
+
+
+</script>
+<body>
+  <table>
+    <tbody>
+	<tr>
+	  <td>
+	    Forward:
+	    <input id="forward" value="W" type="text">
+	  </td>
+	  <td>
+	    Backward:
+	    <input id="backward" value="S" type="text">
+	  </td>
+	  <td>
+	    Left:
+	    <input id="left" value="A" type="text">
+	  </td>
+	  <td>
+	    Right:
+	    <input id="right" value="D" type="text">
+	  </td>
+	</tr>
+	<tr>
+	  <td>
+	    Look Up:
+	    <input id="lookup" value="I" type="text">
+	  </td>
+	  <td>
+	    Look Down:
+        <input id="lookdown" value="K" type="text">
+	  </td>
+	  <td>
+	    Look Left:
+	    <input id="lookleft" value="J" type="text">
+	  </td>
+	  <td>
+	    Look Right:
+	    <input id="lookright" value="L" type="text">
+	  </td>
+	</tr>
+	<tr>
+	  <td>
+	      Jump:
+	      <input id="jump" value=" " type="text">
+	  </td>
+	  <td>
+	      Crouch:
+	      <input id="crouch" value="C" type="text">
+	  </td>
+    <td>
+        Shell:
+        <input id="shoot" value=";" type="text">
+    </td>
+  </tr>
+  <tr>
+	  <td>
+	      Fly:
+	      <input id="fly" value=false type="checkbox">
+	  </td>
+	  <td>
+	      noclip:
+	      <input id="noclip" value=false type="checkbox">
+	  </td>
+	</tr>
+    </tbody>
+  </table>
+  <canvas id="screen" width=500 height=500/>
+  <input type="text" id="chatline"/>
+  <div id="chatbox"/>
+</body>
+</html>

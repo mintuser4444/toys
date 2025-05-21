@@ -1,0 +1,13 @@
+{
+  "name": "socket-stuff",
+  "version": "0.0.1",
+  "description": "socketed app",
+  "dependencies": {
+    "express": "^4.13.4",
+    "mongodb": "^2.1.7",
+    "multiparty": "^4.2.3",
+    "socket.io": "^1.4.5",
+    "sqlite": "^4.1.1",
+    "sqlite3": "^5.0.8"
+  }
+}

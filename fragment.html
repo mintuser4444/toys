@@ -1,0 +1,112 @@
+<html><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<title>.: fragment :.</title>
+<script id="vertex_shader" type="x-shader/x-vertex">
+attribute vec2 a_vertex;
+
+varying vec2 v_texCoord;
+
+void main() {
+  gl_Position = vec4(a_vertex.x,a_vertex.y,1,1);
+  vec2 flipcoords = vec2(a_vertex.x,-a_vertex.y);
+  v_texCoord = flipcoords*.5+vec2(.5,.5);
+}
+</script>
+<script>
+get_picture = function(files){
+  var r = new FileReader();
+  r.onload = function(e){document.getElementById("from").src = e.target.result};
+  r.readAsDataURL(files[0]);
+};
+run_program = function(blank){
+  var canvas_to = document.getElementById("to");
+  if(!blank){
+    var img_from = document.getElementById("from");
+    canvas_to.width = img_from.width;
+    canvas_to.height = img_from.height;
+  }
+  else {
+    canvas_to.width = document.getElementById("width").value;
+    canvas_to.height= document.getElementById("height").value;
+  }
+  var gl = canvas_to.getContext("webgl", {preserveDrawingBuffer: true});
+  var vshader = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vshader, document.getElementById("vertex_shader").textContent);
+  gl.compileShader(vshader);
+  if(!gl.getShaderParameter(vshader, gl.COMPILE_STATUS))
+    document.getElementById("program_errors").textContent += gl.getShaderInfoLog(vshader);
+  var fshader = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fshader, document.getElementById("fragment_shader").value);
+  gl.compileShader(fshader);
+  if(!gl.getShaderParameter(fshader, gl.COMPILE_STATUS))
+    document.getElementById("program_errors").textContent += gl.getShaderInfoLog(fshader);
+  var program = gl.createProgram();
+  gl.attachShader(program, vshader);
+  gl.attachShader(program, fshader);
+  gl.linkProgram(program);
+  if(!gl.getProgramParameter(program, gl.LINK_STATUS))
+    document.getElementById("program_errors").textContent += gl.getProgramInfoLog(program);
+  gl.useProgram(program);
+  var a_vertex = gl.getAttribLocation(program, "a_vertex");
+  if(!blank){
+    var u_tex = gl.getUniformLocation(program, "u_tex");
+    var u_ar = gl.getUniformLocation(program, "u_ar");
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D,gl.createTexture());
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,document.getElementById("from"));
+    gl.uniform1i(u_tex,0);
+    gl.uniform1f(u_ar,img_from.height/img_from.width);
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER,gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([3,-1, -1,-1, -1,3]),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(a_vertex);
+  gl.vertexAttribPointer(a_vertex,2,gl.FLOAT,false,0,0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+};
+</script>
+</head>
+<body>
+<img id="from">
+<canvas id="to"></canvas>
+<textarea id="fragment_shader" cols="80" rows="24">
+precision mediump float;
+
+varying vec2 v_texCoord;
+
+uniform sampler2D u_tex;
+uniform float u_ar; //aspect ratio
+
+void main() {
+  float schwarzchild = .2;
+  vec2 offset = vec2(.5,.5);
+  vec2 x = v_texCoord - offset;
+  x.y *= u_ar;
+  float r0 = length(x);
+  if(r0<schwarzchild)
+    gl_FragColor = vec4(0.0,0.0,0.0,1.0);
+  else{
+    float theta = atan(x.y,x.x);
+    float r = 2.0*sqrt(schwarzchild*(r0-schwarzchild));
+    gl_FragColor = texture2D(u_tex,vec2(r*cos(theta),r/u_ar*sin(theta))+offset);
+  }
+}
+</textarea>
+<table><tr>
+<td><input type="file" value="get picture" onchange="javascript:get_picture(this.files)"></td>
+<td><input type="button" value="run program" onclick="javascript:run_program()"></td>
+<td></td>
+</tr>
+<tr>
+<td><input type="button" value="use blank texture" onclick="javascript:run_program('blank')"></td>
+<td>width <input type="text" value="600" id="width"></td>
+<td>height <input type="text" value="600" id="height"></td>
+</tr></table>
+<div id="program_errors">
+</body>
+</html>

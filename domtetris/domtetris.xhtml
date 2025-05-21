@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+  <head>
+    <title>yet another tetris</title>
+    <link href="tetris.css" rel="stylesheet" type="text/css"/>
+    <script type="text/javascript" src="tetris.js"/>
+    <script type="text/javascript">
+var chatclientjs = document.createElement("script");
+chatclientjs.type = "text/javascript";
+chatclientjs.src = "chatclient.js";
+chatclientjs.onload = function(){
+  var chatline = document.getElementById("chatline");
+  var chats = document.getElementById("chats");
+  chatclient(chatline, chats);
+};
+document.getElementsByTagName("head")[0].appendChild(chatclientjs);
+  </script>
+  </head>
+  <body>
+    <div id="board"/>
+    <div id="next"/>
+    <div id="attrs"/>
+    <div id="multi">
+      <div id="multiboard"/>
+      <div id="multinext"/>
+      <div id="multiattrs"/>
+    </div>
+    <div id="prefs">
+      <table id="preftable">
+	<tr>
+	  <td class="prefcell">
+	    Left:<input type="text" id="left" value="j"/>
+	  </td>
+	  <td class="prefcell">
+	    Right:<input type="text" id="right" value="l"/>
+	  </td>
+	  <td class="prefcell">
+	    Down:<input type="text" id="down" value="k"/>
+	  </td>
+	  <td class="prefcell">
+	    Drop:<input type="text" id="drop" value=" "/>
+	  </td>
+	</tr>
+	<tr>
+	  <td class="prefcell">
+	    Counterclockwise:<input type="text" id="counterclockwise" value="d"/>
+	  </td>
+	  <td class="prefcell">
+	    Retrograde:<input type="text" id="retrograde" value="f"/>
+	  </td>
+	  <td class="prefcell">
+	    Pause:<input type="text" id="pause" value="p"/>
+	  </td>
+	  <td class="prefcell">
+	    Reset:<input type="text" id="reset" value="r"/>
+	  </td>
+	</tr>
+	<tr>
+	  <td class="prefcell">
+	    Base drop time:<input type="text" id="basedroptime" value="300"/>
+	  </td>
+	  <td class="prefcell">
+	    Accelerate by:<select id="accel">
+	      <option value="drops">Drops</option>
+	      <option value="score">Score</option>
+	      <option value="lines">Lines</option>
+	      <option value="none">Don't accelerate</option>
+	      </select>
+	  </td>
+	  <td class="prefcell">
+	    Acceleraton factor:<input type="text" id="accelfactor" value=".001"/>
+	  </td>
+	</tr>
+	<tr>
+	  <td class="prefcell">
+	    Width:<input type="text" id="width" value="10"/>
+	  </td>
+	  <td class="prefcell">
+	    Height:<input type="text" id="height" value="20"/>
+	  </td>
+	</tr>
+      </table>
+    </div>
+    <div>
+      <p>Chat here: <input id="chatline" type="text"/></p>
+      <div id="chats"/>
+    </div>
+  </body>
+</html>

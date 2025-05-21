@@ -1,0 +1,457 @@
+<html>
+<head>
+<meta charset="utf-8"/>
+<script>
+var ops = {};
+
+// if ternary operations are needed for some reason, need an in4
+var add_op = function(name, in1, in2, in3){
+  if(!ops[name])
+    ops[name] = {};
+  if(in3){ // binary operation
+    if(!ops[name][in1])
+      ops[name][in1] = {};
+    ops[name][in1][in2] = in3;
+  } else { // unary operation
+    ops[name][in1] = in2;
+  }
+  if(!window[name]){
+    if(in3)
+      window[name] = in3;
+    else
+      window[name] = in2;
+  }
+}
+
+var hash_max = 1073741789; //largest prime less than 2^30
+var small_prime_numbers = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97];
+
+var make = function(type,data){
+  return ops["make"][type](data);
+}
+
+var mul = function(x,y){
+  if(!x.type)
+    return x*y;
+  return ops["mul"][x.type][y.type](x,y);
+}
+
+var add = function(x,y){
+  if(!x.type)
+    return x+y;
+  return ops["add"][x.type][y.type](x,y);
+}
+
+var neg = function(x){
+  if(!x.type)
+    return -x;
+  return ops["neg"][x.type](x);
+}
+
+var sub = function(x,y){
+  if(!x.type)
+    return x-y;
+  if(ops["sub"][x.type][y.type])
+    return ops["sub"][x.type][y.type](x,y);
+  if(ops["add"][x.type][y.type])
+    return ops["add"][x.type][y.type](x,ops["neg"][y.type](y));
+}
+
+var to_str = function(x){
+  if(x == undefined)
+    return "";
+  if(!x.type)
+    return ""+x;
+  return ops["str"][x.type](x);
+}
+
+var hash = function(x){
+  if(!x.type)
+    return x;
+  return ops["hash"][x.type](x);
+}
+
+var cmp = function(x,y){
+  if(!x.type){
+    if(x == y)
+	  return 0;
+	if(x > y)
+	  return 1;
+	if(x<y)
+	  return -1;
+	return 2;
+  }
+  return ops["cmp"][x.type](x,y);
+}
+
+////////////////////hash list lol
+add_op("make", "hashlist", function(initdata){
+  if(initdata.length == 0){
+    return {type:"hashlist", data:[], denselist:[],
+            add:hashlist_add, remove:hashlist_remove, has:hashlist_has,
+			get size(){return this.get_size();}, get_size:hashlist_size};
+  }
+  var hl = make("hashlist", []);
+  for(var i=0; i<initdata.length; i++)
+    hl.add(initdata[i]);
+  return hl;
+});
+
+function hashlist_add(x){
+  var h = hash(x);
+  if(this.data[h] == undefined)
+    this.data[h] = [x];
+  else{
+    for(var i=0; i<this.data[h].length; i++)
+	  if(cmp(this.data[h][i],x)==0)
+	    return;
+	this.data[h].push(x);
+  }
+  this.denselist.push(x);
+}
+
+function hashlist_remove(x){
+  var h = hash(x);
+  if(this.data[h] == undefined){
+    return false;
+  }
+  for(var i=0; i<this.data[h].length; i++){
+    if(cmp(this.data[h][i],x)==0){
+	  this.data[h].splice(i,1);
+	  for(var j=0; j<this.denselist.length; j++){
+	    if(cmp(this.denselist[j],x==0))
+		  this.denselist.splice(j,1);
+	  }
+	  return true;
+	}
+  }
+  return false;
+}
+
+function hashlist_has(x){
+  var h = hash(x);
+  if(this.data[h] == undefined){
+    return false;
+  }
+  for(var i=0; i<this.data[h].length; i++)
+    if(cmp(this.data[h][i],x)==0)
+	  return true;
+  return false;
+}
+
+function hashlist_size(){
+  return this.denselist.length;
+}
+
+////////////////////perm
+add_op("make", "perm", function(origdata){
+  var data = [];
+  for(var i=0; i<origdata.length; i++)
+    if(origdata[i].length >= 2)
+	  data.push(origdata[i]);
+  var max = 0;
+  for(var i=0; i<data.length; i++){
+    for(var j=0; j<data[i].length; j++){
+	  if(data[i][j] > max)
+	    max = data[i][j];
+	}
+  }
+  return {data:data, max:max, type:"perm"};
+});
+
+var perm_act_item = function(p,idx){
+  for(var i=p.data.length-1; i>=0; i--)
+    for(var j=0; j<p.data[i].length; j++)
+	  if(p.data[i][j] == idx){
+	    if(p.data[i].length > j+1)
+		  return p.data[i][j+1];
+		else
+          return p.data[i][0];
+		}
+  return idx;
+}
+
+add_op("mul", "perm", "perm", function(p,q){
+  var max = p.max>q.max?p.max:q.max;
+  var newdata = [];
+
+  var items = [];
+  for(var i=0; i<max; i++)
+    items.push(false);
+  for(var i=0; i<max; i++){
+    if(items[i] == false)
+	  items[i] = true;
+	else
+	  continue;
+	var cur = i;
+	var curlist = [i];
+	while(true){
+	  var qq = perm_act_item(q,cur);
+      var pq = perm_act_item(p,qq);
+	  if(items[pq] == true){
+	    newdata.push(curlist);
+        break;
+	  }
+	  items[pq] = true;
+	  curlist.push(pq);
+	  cur = pq;
+	}
+  }
+  return make("perm",newdata);
+});
+
+add_op("str","perm",function(p){
+  var sb = [];
+  sb.push("[")
+  for(var i=0; i<p.data.length; i++){
+    sb.push("[");
+	for(var j=0; j<p.data[i].length; j++){
+	  sb.push(p.data[i][j]);
+	  if(p.data[i].length > j+1)
+	    sb.push(",");
+	}
+	sb.push("]");
+	if(p.data.length > i+1)
+	  sb.push(",");
+  }
+  sb.push("]");
+  return sb.join("");
+});
+
+add_op("hash","perm",function(p){
+  var v = 0;
+  var pidx = 0;
+  for(var i=0; i<p.data.length; i++){
+    for(var j=0; j<p.data[i].length; j++){
+	  v += p.data[i][j] * small_prime_numbers[pidx];
+	  pidx++;
+	}
+  }
+  v %= hash_max;
+  return v;
+});
+
+add_op("cmp","perm",function(p,q){
+  if(p.data.length != q.data.length)
+    return 2;
+  for(var i=0; i<p.data.length; i++){
+    if(p.data[i].length != q.data[i].length)
+	  return 2;
+	for(var j=0; j<p.data[i].length; j++){
+	  if(p.data[i][j] != q.data[i][j])
+	    return 2;
+	}
+  }
+  return 0;
+});
+
+////////////////////////////////groups
+add_op("make","group",function(gens){
+  var elts = make("hashlist",gens);
+  var newelts = [];
+  for(var i=0; i<gens.length; i++)
+    newelts.push(gens[i]);
+  while(newelts.length > 0){
+    var x = newelts.pop();
+    for(var i=0; i<gens.length; i++){
+      var gx = mul(gens[i],x);
+	  if(!elts.has(gx)){
+	    newelts.push(gx);
+		elts.add(gx);
+	  }
+    }
+  }
+  return {type:"group",gens:gens,elts:elts,size:elts.size};
+});
+
+add_op("str","group",function(G){
+  sb = ["group of size " + G.size + " with generators ["];
+  for(var i=0; i<G.gens.length; i++){
+    sb.push(to_str(G.gens[i]));
+	if(G.gens.length > i+1)
+	  sb.push(", ");
+  }
+  sb.push("]");
+  return sb.join("");
+});
+
+////////////////////////////////polynomials
+
+add_op("make","poly", function(cl){
+  return {type:"poly",data:cl};
+});
+
+add_op("add","poly","poly",function(p,q){
+  var rl = [];
+  var i=0;
+  for(; i<p.data.length && i<q.data.length; i++)
+    rl.push(p.data[i]+q.data[i]);
+  for(; i<p.data.length; i++)
+    rl.push(p.data[i]);
+  for(; i<q.data.length; i++)
+    rl.push(q.data[i]);
+  for(var i = rl.length-1; i>=0; i--){
+    if(rl[i] != 0)
+      break;
+    rl.pop();
+  }
+  return make("poly",rl);
+});
+
+add_op("neg","poly",function(p){
+  var pp = [];
+  for(var i=0; i<p.data.length; i++)
+    pp.push(neg(p.data[i]));
+  return {type:"poly",data:pp};
+});
+
+add_op("mul","poly","poly",function(p,q){
+  var rl = [];
+  for(var i=0; i<p.data.length+q.data.length-1; i++){
+    rl.push(0);
+  }
+  for(var i=0; i<p.data.length; i++)
+    for(var j=0; j<p.data.length; j++)
+      rl[i+j] += p.data[i]*q.data[j];
+  return make("poly",rl);
+});
+
+add_op("diff", "poly", function(p){
+  var rl = [];
+  for(var i=1; i<p.data.length; i++)
+    rl.push(mul(p.data[i],i));
+  return make("poly",rl);
+});
+
+add_op("str","poly", function(poly){
+  var deg = poly.data.length;
+  var vn = "x";
+  var printmon = function(vn,n){
+    if(n==0)
+      return "";
+    if(n == 1)
+      return vn;
+    var ss = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+    var dl = [];
+    while(n>0){
+      var d = n%10;
+      var n = Math.floor(n/10);
+      dl.push(ss[d]);
+    }
+    dl.push(vn);
+    dl.reverse();
+    return dl.join("");
+  }
+  var sb = [];
+  for(var i=deg-1; i>=0; i--){
+    var cf = poly.data[i];
+    if(cf != 0){
+      if(cf > 0 && i != deg-1)
+        sb.push("+");
+      if(cf < 0){
+        sb.push("-");
+        cf = -cf;
+      }
+      if(cf != 1 || i == 0)
+        sb.push(cf);
+      sb.push(printmon(vn,i));
+    }
+  }
+  return sb.join("");
+});
+
+///////////////////////////////ratfun
+add_op("make","ratfun",function(n,d){
+  return reduce({type:"ratfun",n:n,d:d});
+});
+
+add_op("reduce","ratfun",function(r){
+  d = gcd(r.n,r.d);
+  r.n = div(r.n,d);
+  r.d = div(r.d,d);
+});
+
+function gcd(p,q){
+  if(p.data.length == 1 || q.data.length == 1)
+    return 1;
+  if(p.data.length < q.data.length)
+    gcd(q,p);
+  if(q.data.length == 0)
+    return p;
+  if(p.data.length > q.data.length){
+    var n = p.data.length - q.data.length;
+    var qqd = [];
+    for(var i=0; i<n; i++)
+      qqd.push(0);
+    for(var i=0; i<q.data.length; i++)
+      qqd.push(q.data[i]);
+    var qq = {type:"poly",data:qqd};
+    var d = p.data.length-1;
+    var pp = sub(mul(qq.data[d],p),mul(qq,p.data[d]));
+    return gcd(pp,q);
+  }
+
+}
+
+add_op("str","ratfun",function(r){
+  sb = ["("];
+  sb.push(to_str(r.n));
+  sb.push("/");
+  sb.push(to_str(r.d));
+  sb.push(")");
+  return sb.join("");
+});
+
+add_op("diff","ratfun",function(r){
+  return make("ratfun", sub(mul(diff(r.n),r.d),mul(r.n,diff(r.d))),
+                        mul(r.d,r.d));
+});
+
+///////////////////////////////test
+function test(){
+  var p1 = make("perm",[[1,2,3,4,5]]);
+  console.log(p1);
+  var p2 = make("perm",[[1,2]]);
+  var G = make("group",[p1,p2]);
+  console.log(to_str(G));
+  var p = make("poly",[-1,-1,2]);
+  var q = make("poly",[-1,0,1]);
+  console.log(p);
+  console.log(to_str(add(p,q)));
+  console.log(to_str(mul(p,q)));
+  console.log(to_str(diff(mul(p,q))));
+  console.log(to_str(gcd(p,q)));
+}
+
+////////////////////////////////cells
+var cellcount = 0;
+var make_new_cell = function(){
+  var div = document.createElement("div");
+  div.id = "celldiv"+cellcount;
+  var intext = document.createElement("textarea");
+  intext.id = "cellinput"+cellcount;
+  var inbutton = document.createElement("input");
+  inbutton.type = "button"
+  inbutton.id = cellcount;
+  inbutton.onclick = runcell;
+  var outp = document.createElement("p");
+  outp.id = "celloutput"+cellcount;
+  div.appendChild(intext);
+  div.appendChild(inbutton);
+  div.appendChild(outp);
+  document.body.appendChild(div);
+  cellcount++;
+}
+var runcell = function(e){
+  var cell = e.target.id;
+  var out = to_str(eval(document.getElementById("cellinput"+cell).value));
+  document.getElementById("celloutput"+cell).innerHTML = out;
+  if(cell == cellcount-1)
+    make_new_cell();
+}
+window.onload = make_new_cell;
+</script>
+</head>
+<body>
+</body>
+</html>

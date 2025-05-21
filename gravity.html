@@ -1,0 +1,1277 @@
+<html><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<title>
+  .: asteroids :.
+</title>
+<script type="text/javascript">
+'use strict';
+const SCREEN_RADIUS=256;
+const USE_WEBGL=true;
+const USE_WAVE=true;
+let gl;
+let glPromiseRes;
+const glPromise = new Promise(res=>glPromiseRes=res);
+let shaderPromiseRes;
+const shaderPromise = new Promise(res=>shaderPromiseRes=res);
+let spritePromiseRes;
+const spritePromise = new Promise(res=>spritePromiseRes=res);
+const sprogram = {};
+const sprites = {};
+const shapes = {};
+const wave = {};
+const space = {
+  size: 2*Math.pow(10,10),
+  viewsize: Math.pow(10,10),
+  color: "rgb(0,0,0)",
+  scrollable: true,
+  wrap: true
+};
+const viewFraction = space.viewsize/space.size;
+const centerx = SCREEN_RADIUS;
+const centery = SCREEN_RADIUS;
+var xoff=0;
+var yoff=0;
+const ptogl = (px,py)=> [px/space.viewsize-xoff, py/space.viewsize-yoff];
+const ptowave = (px,py)=>[px/space.size, py/space.size];
+const scrtogl = (sx,sy)=>[1-sx/SCREEN_RADIUS, sy/SCREEN_RADIUS-1];
+const scrtowave = (sx,sy)=>{
+  const res = [(1-sx/SCREEN_RADIUS+xoff)*viewFraction,(sy/SCREEN_RADIUS-1+yoff)*viewFraction];
+  console.log([sx,sy],[xoff,yoff],'->',res);
+  return res;
+};
+const mtopix = SCREEN_RADIUS/space.viewsize;
+const mtogl = 1/space.viewsize;
+const mtowave = 1/space.size;
+
+
+// libs here
+const hmlElement = (eName, params, childs) => {
+  if(childs == undefined && Array.isArray(params)){
+    childs = params;
+    params = undefined;
+  }
+  const el = document.createElement(eName);
+  if(params){
+    for(const p in params){
+      el[p] = params[p];
+    }
+  }
+  if(childs){
+    for(const c of childs){
+      el.appendChild(typeof c == 'string' ? document.createTextNode(c) : c);
+    }
+  }
+  return el;
+}
+const hml = {};
+['html','head','body','a','b','div','i','p','h1','h2','span',
+  'title','link','select','option','button','form','input','textarea',
+  'iframe','ol','ul','li','img','canvas','table','tr','td'].forEach(key => hml[key] = (params, childs) => hmlElement(key, params, childs));
+
+const loadShaders = async (sobj) => {
+  const sources = {};
+  const getSource = async (location)=>{
+    const res = await fetch(location);
+    sources[location] = await res.text();
+  };
+  const sourcePromises = [];
+  for(const name in sobj){
+    sourcePromises.push(getSource(sobj[name][0]));
+    sourcePromises.push(getSource(sobj[name][1]));
+  }
+  await Promise.all(sourcePromises);
+  await glPromise;
+  const getShader = (type, location) => {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, sources[location]);
+    gl.compileShader(shader);
+    if(!gl.getShaderParameter(shader, gl.COMPILE_STATUS)){
+      console.log(`Error in ${type} ${location}`, gl.getShaderInfoLog(shader));
+    }
+    return shader;
+  };
+  const getProgram = (programName, [vloc, floc]) => {
+    const program = gl.createProgram();
+    gl.attachShader(program, getShader(gl.VERTEX_SHADER, vloc));
+    gl.attachShader(program, getShader(gl.FRAGMENT_SHADER, floc));
+    gl.linkProgram(program);
+    if(!gl.getProgramParameter(program, gl.LINK_STATUS)){
+      console.log("Error in " + programName, gl.getProgramInfoLog(program));
+    }
+    const programData = {program};
+    const numAttrs = gl.getProgramParameter(program,gl.ACTIVE_ATTRIBUTES);
+    for(var i=0; i<numAttrs; i++){
+      var name = gl.getActiveAttrib(program,i).name;
+      programData[name] = gl.getAttribLocation(program,name);
+    }
+    const numUniforms = gl.getProgramParameter(program,gl.ACTIVE_UNIFORMS);
+    for(var i=0; i<numUniforms; i++){
+      var name = gl.getActiveUniform(program,i).name;
+      programData[name] = gl.getUniformLocation(program,name);
+    }
+    return programData;
+  }
+  for(const name in sobj){
+    sprogram[name] = getProgram(name, sobj[name]);
+  }
+  shaderPromiseRes();
+}
+
+const loadSprites = function(sobj){
+  const promises = [];
+  for(const name in sobj){
+    sprites[name] = sobj[name];
+    var img = new Image();
+    img.src = sprites[name].src;
+    sprites[name].img = img;
+    let pRes;
+    promises.push(new Promise(res => pRes = res));
+    img.onload = ()=>makeTextures(name, pRes);
+  }
+  Promise.all(promises).then(spritePromiseRes);
+}
+const makeTextures = async (name, pRes) => {
+  //console.log(sprite,img,img.width);
+  await glPromise;
+  sprites[name].tex = new Array();
+  var h = sprites[name].horizontal || 1;
+  var v = sprites[name].vertical || 1;
+  var sz = sprites[name].img.width/h;
+  const offscreen_canvas = document.createElement('canvas');
+  document.body.appendChild(offscreen_canvas);
+  offscreen_canvas.width = sz;
+  offscreen_canvas.height = sz;
+  var ctx = offscreen_canvas.getContext("2d");
+  //ctx.rotate(-Math.PI/2);
+  //ctx.translate(-sz,0);
+  for(var i=0; i<h; i++){
+    for(var j=0; j<v; j++){
+      sprites[name].tex[i*v+j] = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, sprites[name].tex[i*v+j]);
+      ctx.clearRect(0,0,sz,sz);
+      ctx.drawImage(sprites[name].img,i*sz,j*sz,sz,sz,0,0,sz,sz);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,offscreen_canvas);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.generateMipmap(gl.TEXTURE_2D);
+    }
+  }
+  pRes();
+}
+
+loadShaders({
+  simple: ["shaders/simple2d.vert","shaders/simple.frag"],
+  ellipse: ["/shaders/sprite2d.vert","/shaders/circle.frag"],
+  sprite: ["shaders/sprite2d.vert","shaders/sprite.frag"],
+  gaussian: ["shaders/sprite2d.vert", "shaders/gaussian.frag"],
+  wave_sim: ["shaders/sprite2d.vert", "shaders/wave.frag"],
+  wave_display: ["shaders/sprite2d.vert", "shaders/space_wave_display.frag"],
+  wave_effect: ["shaders/sprite2d.vert", "shaders/wave_effect.frag"],
+  reduce: ["shaders/sprite2d.vert", "shaders/reduce.frag"],
+});
+loadSprites({
+  turtle: {src: "turtlepond/turtle512.png"},
+  fish: {src: "turtlepond/fish128.png", horizontal: 7},
+});
+
+/////////////////////////////// input
+const keys = {}
+const keysdown = [];
+const setpref = function(control, e){
+  var key = String.fromCharCode(e.charCode).toUpperCase();
+  keys[key] = control;
+  e.target.value = key;
+  e.preventDefault();
+}
+const keydown = function(e){
+  var key = keys[String.fromCharCode(e.keyCode)]
+  //console.log('keydown:', e, String.fromCharCode(e.keyCode), key);
+  if(key)
+    if(keysdown.indexOf(key) == -1)
+      keysdown.push(key)
+  if(key=="tractorbeam"){
+    var mr2 = Math.pow(10,20)
+    for(var i=0; i<typelists.asteroid.length; i++){
+      var x = typelists.asteroid[i].x-ship.x
+      var y = typelists.asteroid[i].y-ship.y
+      var r2 = x*x + y*y
+      if(r2<mr2){
+        tractorbeamtarget = typelists.asteroid[i]
+        mr2 = r2
+      }
+    }
+  }
+}
+const keyup = function(e){
+  var key = keys[String.fromCharCode(e.keyCode)];
+  //console.log('keyup:', e, String.fromCharCode(e.keyCode), key);
+  if(key){
+    if(keysdown.indexOf(key) != -1)
+      keysdown.splice(keysdown.indexOf(key),1);
+    switch(key){
+    case "blaster":
+      fire();
+      break;
+    case "tractorbeam":
+      tractorbeamtarget = null;
+      break;
+    case "teleport":
+      teleport();
+      break;
+    }
+  }
+}
+
+//////////////////////////// initialization
+const debugTable = [];
+const debugTableTds = [];
+const debugTableValues = (rs) => rs.forEach((r,i)=>r.forEach((cell,j)=>debugTableTds[i][j].textContent = cell));
+let debug2dCtx;
+window.onload = async () => {
+  const trs = [];
+  for(let i=0; i<15; i++){
+    const l = [];
+    debugTableTds.push(l);
+    for(let j=0; j<5; j++){
+      l.push(hml.td({style: 'width: 180px; text-align: right;'}));
+    }
+    trs.push(hml.tr(l));
+  }
+  document.body.appendChild(hml.table(trs));
+  document.body.appendChild(hml.div({id:'debug'}));
+  const canvas = hml.canvas({
+    id:'screen',
+    width: SCREEN_RADIUS*2,
+    height: SCREEN_RADIUS*2,
+    onkeydown: keydown,
+    onkeyup: keyup,
+    onblur: pause,
+    onfocus: resume,
+    onclick: canvas_click,
+    tabIndex: 1,
+  });
+  document.body.appendChild(canvas);
+  canvas.focus();
+  document.body.appendChild(hml.canvas({id:'canvas2d', width:512, height:512}));
+  debug2dCtx = document.getElementById('canvas2d').getContext('2d');
+  const controls = [
+    {id: 'counterclockwise', default: 'L'},
+    {id: 'retrograde', default: 'J'},
+    {id: 'thruster', default: 'I'},
+    //{id: 'blaster', default: 'F'},
+    //{id: 'tractorbeam', default: 'D'},
+    //{id: 'teleport', default: 'S'},
+    //{id: 'asteroid', onclick: makeasteroid},
+    {id: 'pause', onclick: pause},
+  ];
+  const tr0 = [];
+  const tr1 = [];
+  controls.forEach((control,i)=>{
+    const name = control.name || control.id[0].toUpperCase()+control.id.slice(1);
+    let td;
+    if(control.onclick){
+      td = hml.td([hml.button({onclick: control.onclick},[name])]);
+    } else {
+      keys[control.default] = control.id;
+      const input = hml.input({type: 'text', value: control.default});
+      input.onkeypress = (e)=>setpref(control.id,e);
+      const name = control.name || control.id[0].toUpperCase()+control.id.slice(1);
+      td = hml.td([name+':',input]);
+    }
+    if(i<3){
+      tr0.push(td)
+    } else {
+      tr1.push(td)
+    };
+  });
+  document.body.appendChild(hml.table([hml.tr(tr0),hml.tr(tr1)]));
+  if(USE_WEBGL){
+    gl = document.getElementById('screen').getContext('webgl');
+    gl.getExtension("OES_texture_float");
+    glPromiseRes();
+    await Promise.all([shaderPromise,spritePromise]);
+    generateGlObjs();
+  }
+  document.body.appendChild(hml.p({id:'frameTime'}));
+  startgame();
+};
+
+var generateGlObjs = function(){
+  // preprocess objects
+  background_stars.count = background_stars.locations.length;
+  background_stars.buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, background_stars.buf);
+  var data = new Array();
+  for(var i=0; i<background_stars.locations.length; i++){
+    data.push(background_stars.locations[i][0]/space.size);
+    data.push(background_stars.locations[i][1]/space.size);
+  }
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);
+
+  // prepare basic shapes
+  shapes.triangle = {buf: gl.createBuffer(), tris:1};
+  gl.bindBuffer(gl.ARRAY_BUFFER,shapes.triangle.buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([1,0,5,-.866,-.5,-.866]),gl.STATIC_DRAW);
+
+  shapes.square = {buf: gl.createBuffer(), tris:2};
+  gl.bindBuffer(gl.ARRAY_BUFFER,shapes.square.buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([1,-1, 1,1, -1,1, -1,1, -1,-1, 1,-1]),gl.STATIC_DRAW);
+
+  shapes.circle = {buf: gl.createBuffer(), tris:16};
+  gl.bindBuffer(gl.ARRAY_BUFFER,shapes.circle.buf);
+  data = new Array();
+  for(var i=0; i<shapes.circle.tris; i++){
+    data.push(0);
+    data.push(0);
+    data.push(Math.cos(i*2*Math.PI/shapes.circle.tris));
+    data.push(Math.sin(i*2*Math.PI/shapes.circle.tris));
+    data.push(Math.cos((i+1)*2*Math.PI/shapes.circle.tris));
+    data.push(Math.sin((i+1)*2*Math.PI/shapes.circle.tris));
+  }
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);
+
+  // make waves
+  var txx = ["c","n","o","r0","r1","rout"];
+  for(var i=0; i<txx.length; i++){
+    wave[txx[i]] = {};
+    var w = wave[txx[i]];
+    w.fbuf = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, w.fbuf);
+    w.fbuf.width = SCREEN_RADIUS*2;
+    w.fbuf.height = SCREEN_RADIUS*2;
+    w.tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D,w.tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+//    gl.texParameterfv(gl.TEXTURE_2D, gl.TEXTURE_BORDER_COLOR, [0,0,0,0]);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    if(txx[i] != "o"){
+      var ttype = gl.FLOAT;
+    } else {
+      var ttype = gl.UNSIGNED_BYTE;
+    }
+    gl.texImage2D(gl.TEXTURE_2D,
+      0, gl.RGBA, w.fbuf.width, w.fbuf.height,
+      0, gl.RGBA, ttype, null);
+    w.rbuf = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, w.rbuf);
+    gl.renderbufferStorage(
+      gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w.fbuf.width, w.fbuf.height);
+    gl.framebufferTexture2D(
+      gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, w.tex, 0);
+    gl.framebufferRenderbuffer(
+      gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, w.rbuf);
+    var s = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if(s != gl.FRAMEBUFFER_COMPLETE){
+      console.log(s);
+    }
+    gl.clearColor(.5,.5,.5,1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  }
+}
+
+const G = 6.67300 * Math.pow(10,-11);
+// all values are mks and are supposed to represent the sun-mercury system
+const sol = {
+  m: 1.98892 * Math.pow(10,30),
+  r: 6.955*Math.pow(10,8),
+  x: 0,
+  y: 0
+}
+sol.r2 = sol.r*sol.r;
+const mercury = {
+  m: 3.30200 * Math.pow(10,27),
+  x: 6.98169 * Math.pow(10,9),
+  r: 2.4397*Math.pow(10,8), //100x actual
+  y: 0,
+  xdot: 0,
+  ydot: 1.2 * Math.pow(10,5) //this is completely made up
+}
+mercury.r2 = mercury.r*mercury.r;
+
+const background_stars = {locations: new Array()};
+for(var i=0; i<30*Math.pow(space.size/space.viewsize,2); i++){
+  background_stars.locations.push([
+    Math.random()*2*space.size-space.size,
+    Math.random()*2*space.size-space.size
+  ]);
+}
+
+const getx = function(){return this._x};
+const gety = function(){return this._y};
+const setx = function(newx){
+  if(isNaN(newx))
+    throw `position error, ticklen is ${ticklen}`;
+  if(space.wrap){
+  while(newx < -space.size)
+    newx += 2*space.size;
+  while(newx > space.size)
+    newx -= 2*space.size;
+  }
+  this._x = newx;
+}
+const sety = function(newy){
+  if(space.wrap){
+  while(newy < -space.size)
+    newy += 2*space.size;
+  while(newy > space.size)
+    newy -= 2*space.size;
+  }
+  this._y = newy;
+}
+
+var builtin_types = ["celestial","ship","asteroid","bolt"];
+var arrayflags = ["gravitating", "gravitated", "shootable", "collides_with_stars", "ttl", "animated"];
+var typelists = {};
+var stuff = {};
+for(var i=0; i<arrayflags.length; i++)
+  stuff[arrayflags[i]] = new Array();
+for(var i=0; i<builtin_types.length; i++)
+  typelists[builtin_types[i]] = new Array();
+
+var game_object_delete = function()
+{ for(const flag of this.flags){
+    stuff[flag].splice(stuff[flag].indexOf(this),1);
+  }
+  if(this.type)
+    typelists[this.type].splice(typelists[this.type].indexOf(this),1);
+}
+
+var make_game_object = function(data){
+  if(data.type){
+    if(!typelists[data.type]){
+      typelists[data.type] = new Array();
+    }
+    typelists[data.type].push(data);
+  }
+  if(!data.flags){
+    data.flags = [];
+  }
+  if(data.pos){
+    if(space.wrap){
+      data._x = data.x;
+      data._y = data.y;
+      Object.defineProperty(data, "x", {get:  getx, set: setx});
+      Object.defineProperty(data, "y", {get:  gety, set: sety});
+    }
+    if(data.pos == "away_from_stars"){
+      var xy = xy_away_from_stars();
+      data.x = xy[0];
+      data.y = xy[1];
+    }
+    else if(data.pos.length == 2){
+      data.x = data.pos[0];
+      data.y = data.pos[1];
+    }
+  }
+  if(data.vel){
+    if(data.vel == "stationary"){
+      data.xdot = 0;
+      data.ydot = 0;
+    }
+    else if(data.vel.length == 2){
+      data.xdot = data.vel[0];
+      data.ydot = data.vel[1];
+    }
+  }
+  if(data.r)
+    data.r2 = data.r * data.r;
+  if(data.ttl){
+    data.flags.push("ttl");
+  }
+  if(data.animtime){
+    data.flags.push("animated");
+    if(!data.animphase){
+      data.animphase = 0;
+    }
+  }
+  if(data.flags){
+    data.flags.forEach(flag=>{
+      if(!stuff[flag]){
+        stuff[flag] = [];
+      }
+      stuff[flag].push(data);
+    });
+  }
+  data.delete = game_object_delete;
+  return data;
+}
+
+var xy_away_from_stars = function(){
+  do{
+    var x = 2*(Math.random()-.5)*space.size;
+    var y = 2*(Math.random()-.5)*space.size;
+    var collide = false;
+
+    for(var i=0; i<typelists.celestial.length; i++){
+      var d = Math.sqrt(Math.pow(typelists.celestial[i].x - x,2)+Math.pow(typelists.celestial[i].y - y,2))
+      if(d<5*Math.pow(10,9)){
+        collide = true;
+        continue;
+      }
+    }
+  } while(collide);  // this condition shouldn't be necessary lol it should just end if not continued
+  return [x,y];
+}
+
+var get_dist = function(o1,o2){
+  var xd = o1.x-o2.x;
+  var yd = o1.y-o2.y;
+  return Math.sqrt(xd*xd+yd*yd);
+}
+
+for(var i=0; i<10; i++){
+  make_game_object({
+    m: Math.random()*Math.pow(10,30),
+    r: (Math.random()+.2)*5*Math.pow(10,8),
+    pos: "away_from_stars",
+    color: "rgb(200,255,100)",
+    type: "celestial",
+    flags: ["gravitating"]
+  });
+}
+
+const shipr = 5*Math.pow(10,8);
+var ship = make_game_object({
+  pos: "away_from_stars",
+  vel: "stationary",
+  r: shipr,
+  orientation: 0,
+  ar: .7,
+  shape: [6,0,-2,4,-2,-4,-2,0],
+  thruster: Math.pow(10,6),
+  max_speed: Math.pow(10,6),
+  vernier: Math.PI/2,
+  blasterspeed: 3*Math.pow(10,5),
+  blasterttl: 300,
+  tractorbeam: 3*Math.pow(10,3),
+  drawtype: "sprite",
+  sprite: "turtle",
+  type: "ship",
+  flags: ["shootable", "gravitated", "collides_with_stars"],
+  legs: [
+    {
+      attachx: 1/2*shipr,
+      attachy: 1/6*shipr,
+      leglen:  1/3*shipr,
+      sorientation: 0,
+      strokephase: Math.random()*2*Math.PI,
+      color: [0,1,0,1],
+    },
+    {attachx: -1/2*shipr,
+      attachy: 1/6*shipr,
+      leglen:  1/3*shipr,
+      sorientation: Math.PI,
+      strokephase: Math.random()*2*Math.PI,
+      color: [0,1,0,1],
+    },
+    {attachx: -1/2*shipr,
+      attachy: -5/6*shipr,
+      leglen:  1/3*shipr,
+      sorientation: Math.PI,
+      strokephase: Math.random()*2*Math.PI,
+      color: [0,1,0,1],
+    },
+    {
+      attachx: 1/2*shipr,
+      attachy: -5/6*shipr,
+      leglen:  1/3*shipr,
+      sorientation: 0,
+      strokephase: Math.random()*2*Math.PI,
+      color: [0,1,0,1],
+    }]
+});
+
+for(var i=0; i<10; i++){
+  var o = Math.random()*2*Math.PI;
+  var v = -5*Math.pow(10,5);
+  make_game_object({
+    pos: "away_from_stars",
+    vel: [Math.cos(o)*v,-Math.sin(o)*v],
+    r: 5*Math.pow(10,8),
+    orientation: o,
+    thruster: 5*Math.pow(10,3),
+    max_speed: Math.abs(v),
+    type: "npc",
+    drawtype: "sprite",
+    sprite: "fish",
+    animtime: 2,
+    animphase: Math.random()*2*Math.PI,
+    flags: ["shootable", "gravitated", "collides_with_stars", "edible"]
+  });
+}
+
+var makeasteroid = function(e){
+  var speed = Math.random()*100000;
+  var dir = Math.random()*2*Math.PI;
+  make_game_object({
+    pos: "away_from_stars",
+    vel: [speed*Math.cos(dir), speed*Math.sin(dir)],
+    r: Math.pow(10,8),
+    drawtype: "shape",
+    shape: "circle",
+    color: "rgb(50,50,0)",
+    type: "asteroid",
+    flags: ["gravitated","shootable","collides_with_stars"]
+  });
+}
+
+var tractorbeamtarget = null;
+var dophysics = function(){
+  const tickseconds = 1000*ticklen;
+  //motion
+  for(var i=0; i<stuff.gravitated.length; i++){
+    var thing = stuff.gravitated[i];
+    const speed = Math.sqrt(thing.xdot * thing.xdot + thing.ydot * thing.ydot);
+    if(speed > thing.max_speed){
+      thing.xdot *= thing.max_speed/speed;
+      thing.ydot *= thing.max_speed/speed;
+    }
+    thing.x = thing.x + thing.xdot*tickseconds;
+    thing.y = thing.y + thing.ydot*tickseconds;
+    for(var j=0; j<stuff.gravitating.length; j++){
+      if(stuff.gravitating[j] == thing){
+      	continue; // auto-gravity is not calculated
+      }
+      var rx = thing.x - stuff.gravitating[j].x;
+      var ry = thing.y - stuff.gravitating[j].y;
+      var r2 = (rx * rx + ry * ry);
+      var r = Math.sqrt(r2);
+      var a = -G * stuff.gravitating[j].m / r2;
+      var ax = a * rx / r;
+      var ay = a * ry / r;
+      if(isNaN(ax)){
+        throw "eror";
+      }
+      thing.xdot = thing.xdot + ax*tickseconds;
+      thing.ydot = thing.ydot + ay*tickseconds;
+    }
+    var floatArray = new Float32Array(SCREEN_RADIUS*SCREEN_RADIUS*4);
+    const [wavex,wavey] = ptowave(thing.x,thing.y);
+    const waver = thing.r*mtowave*4;
+    /* using the gpu for this was slow
+    if(thing.sprite == 'turtle'){
+    let buf0 = wave.r0;
+    let buf1 = wave.r1;
+    const swapbuf = () => {
+      const tmp = buf0;
+      buf0 = buf1;
+      buf1 = tmp;
+    };
+    gl.bindFramebuffer(gl.FRAMEBUFFER, buf1.fbuf);
+    gl.clearColor(0,0,0,1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    let program = sprogram.wave_effect;
+    gl.useProgram(program.program);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D,wave.c.tex);
+    gl.uniform1i(program.u_wave,1);
+    gl.uniform1f(program.u_pxc, SCREEN_RADIUS*2);
+    gl.uniform1f(program.u_shrink, 1/2);
+    gl.uniform2fv(program.u_location, [-wavex/2+.5, -wavey/2+.5]);
+    drawsprite(thing.sprite, waver, thing.orientation, thing.ar||1, wavex, wavey, thing.animphase || 0, sprogram.wave_effect);
+    swapbuf();
+    
+    program = sprogram.reduce;
+    gl.useProgram(program.program);
+    for(i=0;i<Math.log2(SCREEN_RADIUS)+1;i++){
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, buf0.tex);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, buf1.fbuf);
+      paintScreen(program);
+      swapbuf();
+      gl.bindTexture(gl.TEXTURE_2D, buf0.tex);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      paintScreen(sprogram.sprite);
+    }
+    
+    gl.bindFramebuffer(gl.FRAMEBUFFER, buf0.fbuf);
+    gl.readPixels(0,0,1,1,gl.RGBA,gl.FLOAT,floatArray);
+    debugTable.push([thing.sprite, floatArray[0], floatArray[1], floatArray[2], floatArray[3]]);
+    }
+    */
+    const pixx = (-wavex+1)*SCREEN_RADIUS;
+    const pixy = (-wavey+1)*SCREEN_RADIUS;
+    const pixr = 2*Math.round(waver * SCREEN_RADIUS/2)+1;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, wave.c.fbuf);
+    gl.readPixels(pixx-pixr/2,pixy-pixr/2,pixr,pixr,gl.RGBA,gl.FLOAT,floatArray);
+    const debugArray = new Uint8ClampedArray(pixr*pixr*4);
+    for(let j=0; j<pixr*pixr; j++){
+      for(let k=0; k<4; k++){
+        debugArray[j*4+k] = floatArray[j*4+k] * 256;
+      }
+    }
+    if(thing.sprite == 'turtle'){
+      debugTable.push([pixr,wavex,wavey,pixx,pixy]);
+      const id = new ImageData(debugArray, pixr);
+      debug2dCtx.putImageData(id, 0, 0);
+    }
+    let accx = 0;
+    let accy = 0;
+    const kerR = pixr/2-1/2;
+    for(let j=0; j<pixr; j++){
+      for(let k=0; k<pixr; k++){
+        const b=floatArray[(j*pixr+k)*4+2];
+        const nj = j-kerR;
+        const nk = k-kerR;
+        const ns = Math.sqrt(nj*nj+nk*nk);
+        const nn = ns!=0?1/ns:0;
+        const nx = nk * nn;
+        const ny = nj * nn;
+        if(b>.5){
+          accx += nx*b;
+          accy += ny*b;
+        }
+        //accx += b;
+        //accy += ny*b;
+      }
+    }
+    thing.xdot += -accx * 2*Math.pow(10,3) * ticklen;
+    thing.ydot += -accy * 2*Math.pow(10,3) * ticklen;
+    debugTable.push([thing.sprite, wavex, wavey, accx, accy]);
+  }
+  /*
+  const npcValues = stuff.animated.map(n=>[n.sprite, n.x, n.y, n.xdot, n.ydot]);
+  debugTableValues([
+    [ship.sprite, ship.x,ship.y,ship.xdot,ship.ydot],
+    ...npcValues
+  ]);*/
+  //input
+  const controlMatrix = {
+    counterclockwise: ()=>{
+      ship.orientation += ship.vernier*ticklen;
+    },
+    retrograde: ()=>{
+      ship.orientation -= ship.vernier*ticklen;
+    },
+    thruster: ()=>{
+      ship.xdot -= ship.thruster*Math.cos(ship.orientation)*ticklen;
+      ship.ydot += ship.thruster*Math.sin(ship.orientation)*ticklen;
+    },
+    tractorbeam: ()=>{
+      if(tractorbeamtarget != null){
+        var x = tractorbeamtarget.x-ship.x;
+        var y = tractorbeamtarget.y-ship.y;
+        var r = Math.sqrt(x*x+y*y);
+        var c = x/r;
+        var s = y/r;
+        ship.xdot += c*ship.tractorbeam;
+        ship.ydot += s*ship.tractorbeam;
+        tractorbeamtarget.xdot -= c*ship.tractorbeam;
+        tractorbeamtarget.ydot -= s*ship.tractorbeam;
+      }
+    }
+  }
+  keysdown.filter(control=>controlMatrix[control]).forEach(control=>controlMatrix[control]());
+
+  for(var i=0;i<stuff.ttl.length;i++){
+    stuff.ttl[i].ttl -= 1;
+    if(stuff.ttl[i].ttl<=0)
+      stuff.ttl[i].delete();
+  }
+  for(var i=0;i<typelists.bolt.length; i++){
+    for(var j=0;j<stuff.shootable.length;j++){
+      const d = get_dist(typelists.bolt[i], stuff.shootable[j]);
+      if(d < stuff.shootable[j].r){
+        if(stuff.shootable[j].type == "asteroid")
+          stuff.shootable[j].delete();
+        typelists.bolt[i].delete();
+        break;
+      }
+    }
+  }
+
+  // stuff collides with stars
+  for(var i=0; i<typelists.celestial.length; i++){
+    if(get_dist(ship, typelists.celestial[i]) < typelists.celestial[i].r*1.5)
+    teleport();
+    for(var j=0; j<stuff.collides_with_stars.length; j++){
+      const d = get_dist(typelists.celestial[i],stuff.collides_with_stars[j]);
+      if(d < typelists.celestial[i].r){
+        stuff.collides_with_stars[j].delete();
+      }
+    }
+  }
+
+  // fish go in their direction
+  stuff.gravitated.forEach(thing => {
+    if(thing.sprite == 'fish'){
+      thing.orientation = -Math.atan2(thing.ydot, thing.xdot) + Math.PI;
+    }
+  })
+
+  // turtle eats edible stuff
+  stuff.edible.forEach(food => {
+    if(get_dist(ship, food) < ship.r + food.r){
+      console.log('ate food', food);
+      food.delete();
+    }
+  });
+
+  // animate ship legs
+  for(const leg of ship.legs){
+    leg.strokephase += (keysdown.includes('thruster')?2:.5)*(Math.random()/5 + 4/5)*5*ticklen;
+    if(leg.strokephase > 2*Math.PI){
+      var c = Math.cos(ship.orientation);
+      var s = Math.sin(ship.orientation);
+      const orientation = leg.sorientation + 1/3*Math.cos(leg.strokephase);
+      var offx = leg.attachx + Math.cos(orientation)*leg.leglen;
+      var offy = leg.attachy + Math.sin(orientation)*leg.leglen;
+      var tipx = ship.x+ c*offx - s*offy;
+      var tipy = ship.y+ s*offx + c*offy;
+      makeWave("physics",tipx,tipy,8,1);
+      //debugTable.push(['tip',...ptowave(tipx,tipy),tipx,tipy]);
+    }
+    leg.strokephase %= 2*Math.PI;
+  }
+
+  // animate animated stuff
+  for(var i=0; i<stuff.animated.length; i++){
+    stuff.animated[i].animphase += ticklen*2*Math.PI/stuff.animated[i].animtime;
+    stuff.animated[i].animphase %= 2*Math.PI;
+  }
+
+  if(USE_WAVE){
+    //wave simulation c to n
+    gl.bindFramebuffer(gl.FRAMEBUFFER,wave.n.fbuf);
+    gl.viewport(0,0,wave.n.fbuf.width,wave.n.fbuf.height);
+    gl.useProgram(sprogram.wave_sim.program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D,wave.c.tex);
+    gl.uniform1i(sprogram.wave_sim.u_u,0);
+    gl.uniform1f(sprogram.wave_sim.u_tick,.05);
+    gl.uniform1f(sprogram.wave_sim.u_pxc,wave.c.fbuf.width);
+    paintScreen(sprogram.wave_sim);
+    // copy n to c	
+    gl.bindFramebuffer(gl.FRAMEBUFFER,wave.c.fbuf);
+    gl.viewport(0,0,wave.c.fbuf.width,wave.c.fbuf.height);
+    const program = sprogram.sprite;
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D,wave.n.tex);
+    gl.uniform1i(program.u_tex,0);
+    paintScreen(sprogram.sprite);
+  }
+}
+
+var fire = function(){
+  var c = Math.cos(ship.orientation);
+  var s = Math.sin(ship.orientation);
+  make_game_object({
+    pos: [ship.x+ship.r*c, ship.y-ship.r*s],
+    vel: [ship.xdot + ship.blasterspeed*c, ship.ydot - ship.blasterspeed*s],
+    ttl: ship.blasterttl,
+    flags: ["gravitated","collides_with_stars"],
+    type: "bolt"
+  });
+}
+
+var teleport = function(){
+  var xy = xy_away_from_stars();
+  ship.x = xy[0];
+  ship.y = xy[1];
+  ship.xdot = 0;
+  ship.ydot = 0;
+}
+
+let pauseNextFrame = false;
+const pause = () => {
+  pauseNextFrame = true;
+};
+const resume = () => {
+  pauseNextFrame = false;
+  runprogram();
+}
+
+var gl_drawstuff = function(){
+  if(space.scrollable){
+    xoff = ship.x*mtogl;
+    yoff = ship.y*mtogl;
+  } else {
+    xoff = 0;
+    yoff = 0;
+  }
+
+  /*debugTable.push(
+    ['pos', ship.x/space.size,ship.y/space.size],
+    ['offsets',xoff,yoff],
+    ['gl', ...ptogl(ship.x,ship.y)],
+    ['wave', ...ptowave(ship.x,ship.y)],
+  );*/
+
+  setRenderBuffer();
+  gl.clearColor(0,0,0,1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  // background stars
+  /*
+  gl.useProgram(sprogram.simple.program);
+  gl.uniform2fv(sprogram.simple.u_xyoffset,[xoff,yoff]);
+  gl.bindBuffer(gl.ARRAY_BUFFER,background_stars.buf);
+  gl.enableVertexAttribArray(sprogram.simple.a_vertex);
+  gl.vertexAttribPointer(sprogram.simple.a_vertex, 2, gl.FLOAT, false, 0, 0);
+  gl.uniform4fv(sprogram.simple.u_color,[1,1,1,1]);
+  gl.uniform1f(sprogram.simple.u_scale,1);
+  gl.drawArrays(gl.POINTS,0,background_stars.count/3);*/
+  // star sizes, colors
+  background_stars.locations.forEach(([x,y])=>{
+    drawshape('circle', [1,1,1,1], 1/250, 0, ...ptogl(x,y));
+  });
+
+  // foreground celestials
+  for(var i=0; i<typelists.celestial.length; i++)
+    drawshape("circle",[.8,1,.3,1],typelists.celestial[i].r*mtogl, 0,
+      ...ptogl(typelists.celestial[i].x,typelists.celestial[i].y)
+    );
+
+
+  // asteroids
+  for(var i=0; i<typelists.asteroid.length; i++)
+    drawshape("circle", [.2,.3,.1,1], typelists.asteroid[i].r*mtogl, 0,
+      ...ptogl(typelists.asteroid[i].x, typelists.asteroid[i].y));
+
+  // bolts
+  for(var i=0; i<typelists.bolt.length; i++)
+    drawshape("circle",[0,typelists.bolt[i].ttl/100+.2,0,1],typelists.bolt[i].r*mtogl,0,
+      ...ptogl(typelists.bolt[i].x, typelists.bolt[i].y));
+
+  // npcs
+  for(var i=0; i<typelists.npc.length; i++){
+    var n = typelists.npc[i];
+    drawsprite(n.sprite,n.r*mtogl,n.orientation,1,...ptogl(n.x,n.y),n.animphase);
+    //drawshape('circle',[0,0,1,1],.01,0,n.x*mtoscr-xoff,n.y*mtoscr-yoff);
+  }
+  // ship legs
+  let program = sprogram.ellipse;
+  gl.useProgram(program.program);
+  gl.bindBuffer(gl.ARRAY_BUFFER,shapes.square.buf);
+  gl.enableVertexAttribArray(program.a_vertex);
+  gl.vertexAttribPointer(program.a_vertex, 2, gl.FLOAT, false, 0, 0);
+  var c = Math.cos(ship.orientation-Math.PI/2);
+  var s = Math.sin(ship.orientation-Math.PI/2);
+  for(const leg of ship.legs){
+    const orientation = leg.sorientation + 1/3*Math.cos(leg.strokephase);
+    var midx = leg.attachx + 1/2*Math.cos(orientation)*leg.leglen;
+    var midy = leg.attachy + 1/2*Math.sin(orientation)*leg.leglen;
+    var spacex =  c*midx + s*midy;
+    var spacey = -s*midx + c*midy;
+    gl.uniform2fv(program.u_xyoffset,[spacex*mtogl,spacey*mtogl]);
+    gl.uniform1f(program.u_orientation,ship.orientation-orientation);
+    gl.uniform1f(program.u_scale,leg.leglen*mtogl);
+    gl.uniform1f(program.u_ar,1.5);
+    gl.uniform4fv(program.u_color,[0,1,0,1]);
+    gl.drawArrays(gl.TRIANGLES,0,6);
+  }
+
+
+  // post-processing
+  if(USE_WAVE){
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    gl.viewport(0,0,SCREEN_RADIUS*2,SCREEN_RADIUS*2);
+	gl.clearColor(0,0,0,1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+	
+	if(0){	//dump out buf
+	const program = sprogram.sprite;
+	gl.useProgram(program.program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D,wave.o.tex);
+    gl.uniform1i(program.u_tex,0);
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER,shapes.square.buf);
+    gl.enableVertexAttribArray(program.a_vertex);
+    gl.vertexAttribPointer(program.a_vertex,2,gl.FLOAT,false,0,0);
+    gl.uniform1f(program.u_scale,1);
+    gl.uniform1f(program.u_orientation,0);
+    gl.uniform1f(program.u_ar,1);
+    gl.uniform2fv(program.u_xyoffset,[0,0]);
+    gl.drawArrays(gl.TRIANGLES,0,6);
+	}
+	
+	if(1){
+    const program = sprogram.wave_display;
+    gl.useProgram(program.program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D,wave.o.tex);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D,wave.c.tex/*sprites.turtle.tex[0]*/);
+    gl.uniform1i(program.u_fb,0);
+    gl.uniform1i(program.u_wave,1);
+    gl.uniform2fv(program.u_viewOffset, [-ship.x/space.size/viewFraction/2+1/2,-ship.y/space.size/viewFraction/2+1/2]);
+    gl.uniform1f(program.u_viewScale, viewFraction);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER,shapes.square.buf);
+    gl.enableVertexAttribArray(program.a_vertex);
+    gl.vertexAttribPointer(program.a_vertex,2,gl.FLOAT,false,0,0);
+    gl.uniform1f(program.u_scale,1);
+    gl.uniform1f(program.u_orientation,0);
+    gl.uniform1f(program.u_ar,1);
+    gl.uniform2fv(program.u_xyoffset,[0,0]);
+    gl.drawArrays(gl.TRIANGLES,0,6);
+  }
+
+  // ship
+  drawsprite("turtle",ship.r*mtogl,ship.orientation,ship.ar,...ptogl(ship.x,ship.y));
+
+  /*if(1){ //minimap
+  const program = sprogram.sprite;
+	gl.useProgram(program.program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D,wave.c.tex);
+    gl.uniform1i(program.u_tex,0);
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER,shapes.square.buf);
+    gl.enableVertexAttribArray(program.a_vertex);
+    gl.vertexAttribPointer(program.a_vertex,2,gl.FLOAT,false,0,0);
+    gl.uniform1f(program.u_scale,1/4);
+    gl.uniform1f(program.u_orientation,0);
+    gl.uniform1f(program.u_ar,1);
+    gl.uniform2fv(program.u_xyoffset,[.75,-.75]);
+    gl.drawArrays(gl.TRIANGLES,0,6);
+	}*/
+  }
+}
+
+const setRenderBuffer = () => {
+  if(USE_WAVE){
+    gl.bindFramebuffer(gl.FRAMEBUFFER,wave.o.fbuf);
+    gl.viewport(0,0,wave.o.fbuf.width,wave.o.fbuf.height);
+  } else {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0,0,SCREEN_RADIUS*2,SCREEN_RADIUS*2);
+  }
+};
+
+var drawshape = function(shape, color, scale, orientation, xoff, yoff){
+  gl.useProgram(sprogram.simple.program);
+  gl.bindBuffer(gl.ARRAY_BUFFER,shapes[shape].buf);
+  gl.enableVertexAttribArray(sprogram.simple.a_vertex);
+  gl.vertexAttribPointer(sprogram.simple.a_vertex,2,gl.FLOAT,false,0,0);
+  gl.uniform1f(sprogram.simple.u_scale,scale);
+  gl.uniform1f(sprogram.simple.u_orientation,orientation);
+  gl.uniform2fv(sprogram.simple.u_xyoffset,[xoff,yoff]);
+  gl.uniform4fv(sprogram.simple.u_color,color);
+  gl.drawArrays(gl.TRIANGLES,0,shapes[shape].tris*3);
+}
+
+const paintScreen = (program) => {
+  gl.bindBuffer(gl.ARRAY_BUFFER,shapes.square.buf);
+  gl.enableVertexAttribArray(program.a_vertex);
+  gl.vertexAttribPointer(program.a_vertex,2,gl.FLOAT,false,0,0);
+  gl.uniform1f(program.u_scale,1);
+  gl.uniform1f(program.u_ar,1);
+  gl.uniform1f(program.u_orientation,0);
+  gl.uniform2fv(program.u_xyoffset,[0,0]);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+};
+
+var drawsprite = function(sprite, scale, orientation, ar, xoff, yoff, phase, programData){
+  var frame;
+  if(!phase)
+    frame = 0;
+  else
+    frame = Math.floor(phase/2/Math.PI*sprites[sprite].tex.length);
+  const program = programData || sprogram.sprite;
+  gl.useProgram(program.program);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.enable(gl.BLEND);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D,sprites[sprite].tex[frame]);
+  gl.uniform1i(program.u_tex,0);
+  gl.uniform1f(program.u_scale,scale);
+  gl.uniform1f(program.u_orientation,orientation);
+  gl.uniform2fv(program.u_xyoffset,[xoff,yoff]);
+  gl.uniform1f(program.u_ar,ar);
+  //gl.uniform4fv(program.u_color,[1,0,1,1]);
+  gl.bindBuffer(gl.ARRAY_BUFFER,shapes.square.buf);
+  gl.enableVertexAttribArray(program.a_vertex);
+  gl.vertexAttribPointer(program.a_vertex,2,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,shapes.square.tris*3);
+}
+
+var drawTurtle = () => {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  drawshape('square',[0,0,0,1],.75,0,0,0);
+  gl.useProgram(sprogram.sprite.program);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.enable(gl.BLEND);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D,sprites.turtle.tex[0]);
+  gl.uniform1i(sprogram.sprite.u_tex,0);
+  gl.uniform2fv(sprogram.sprite.u_xyoffset,[0,0]);
+  gl.uniform1f(sprogram.sprite.u_orientation,0);
+  gl.uniform1f(sprogram.sprite.u_scale,1);
+  gl.uniform1f(sprogram.sprite.u_ar,1);
+  gl.bindBuffer(gl.ARRAY_BUFFER,shapes.square.buf);
+  gl.enableVertexAttribArray(sprogram.sprite.a_vertex);
+  gl.vertexAttribPointer(sprogram.sprite.a_vertex, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+  drawsprite('turtle',.5,.5,1,-.5,-.5);
+  drawshape('square',[0,0,0,1],.5,.5,.5,.5);
+}
+
+var drawtexture = function(program, texture){
+  gl.useProgram(program.program);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D,texture);
+  gl.bindBuffer(gl.ARRAY_BUFFER,shapes.square.buf);
+  gl.enableVertexAttribArray(program.a_vertex);
+  gl.vertexAttribPointer(program.a_vertex,2,gl.FLOAT,false,0,0);
+  gl.uniform1i(program.u_tex0,0);
+  gl.uniform1f(program.u_scale,1);
+  gl.uniform1f(program.u_orientation,0);
+  gl.uniform2fv(program.u_xyoffset,[0,0]);
+  gl.drawArrays(gl.TRIANGLES,0,shapes.square.tris*3);
+}
+
+var drawstuff = function(){
+  var canvas = document.getElementById("screen");
+  var ctx = canvas.getContext("2d");
+  ctx.fillStyle = space.color;
+  ctx.fillRect(0,0,canvas.width,canvas.height)
+
+  if(space.scrollable){
+    centerx = canvas.width/2-ship.x*mtopix;
+    centery = canvas.height/2-ship.y*mtopix;
+  } else {
+    centerx = canvas.width/2;
+    centery = canvas.height/2;
+  }
+  for(var i=0; i<typelists.celestial.length; i++){
+    ctx.fillStyle = typelists.celestial[i].color;
+    ctx.beginPath();
+    ctx.arc(centerx+mtopix*typelists.celestial[i].x,centery+mtopix*typelists.celestial[i].y,
+          mtopix*typelists.celestial[i].r,0,2*Math.PI,true);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.fillStyle = ship.color;
+  ctx.beginPath();
+  var c = Math.cos(ship.orientation);
+  var s = Math.sin(ship.orientation);
+  for(var i=0;i+1<ship.shape.length;i++){
+  if(i==0)
+    ctx.moveTo(centerx+mtopix*ship.x+c*ship.shape[i]+s*ship.shape[i+1],
+          centery+mtopix*ship.y-s*ship.shape[i]+c*ship.shape[i+1]);
+  else
+    ctx.lineTo(centerx+mtopix*ship.x+c*ship.shape[i]+s*ship.shape[i+1],
+          centery+mtopix*ship.y-s*ship.shape[i]+c*ship.shape[i+1]);
+  }
+  ctx.closePath();
+  ctx.fill();
+  if(keysdown.indexOf("thruster")!=-1){
+  ctx.fillStyle = "rgb(255,100,0)";
+  ctx.beginPath();
+  ctx.moveTo(centerx+mtopix*ship.x+c*-2+s*2,
+          centery+mtopix*ship.y-s*-2+c*2);
+  ctx.lineTo(centerx+mtopix*ship.x+c*-2+s*-2,
+          centery+mtopix*ship.y-s*-2+c*-2);
+    ctx.lineTo(centerx+mtopix*ship.x+c*-5+s*0,
+            centery+mtopix*ship.y-s*-5+c*0);
+  ctx.closePath();
+  ctx.fill();
+  }
+  if(tractorbeamtarget != null){
+    ctx.strokeStyle = "rgb(127,0,255)";
+  ctx.moveTo(centerx+mtopix*ship.x,centery+mtopix*ship.y);
+  ctx.lineTo(centerx+mtopix*tractorbeamtarget.x,
+              centery+mtopix*tractorbeamtarget.y);
+  ctx.stroke();
+  }
+  for(i=0;i<typelists.asteroid.length;i++){
+  ctx.fillStyle = typelists.asteroid[i].color;
+  ctx.beginPath();
+  ctx.arc(centerx+mtopix*typelists.asteroid[i].x,centery+mtopix*typelists.asteroid[i].y,
+        mtopix*typelists.asteroid[i].r,0,2*Math.PI,true);
+  ctx.closePath();
+  ctx.fill();
+  }
+  for(i=0;i<typelists.bolt.length;i++){
+  ctx.fillStyle = "rgb(0,"+Math.ceil(255.0*typelists.bolt[i].ttl/200.0)+",0)";
+  ctx.beginPath();
+  ctx.arc(centerx+mtopix*typelists.bolt[i].x,centery+mtopix*typelists.bolt[i].y,
+  2,0,2*Math.PI,true);
+  ctx.closePath();
+  ctx.fill();
+  }
+}
+
+
+// replace with requestAnimationFrame
+var ticklen;
+var lastTimestamp;
+var runprogram = function(timestamp){
+  ticklen = .05;
+  if(timestamp && lastTimestamp){
+    ticklen = Math.min(timestamp - lastTimestamp, 50)/1000;
+  }
+  lastTimestamp = timestamp;
+  if(!started){
+    // prevent pause resume code from starting prematurely
+    return;
+  }
+  if(USE_WEBGL){
+    gl_drawstuff();
+  } else {
+    drawstuff()
+  }
+  dophysics();
+  debugTableValues(debugTable);
+  debugTable.splice(0,debugTable.length);
+  document.getElementById('frameTime').textContent = ticklen;
+  if(!pauseNextFrame){
+    //setTimeout(function(){runprogram();},tickmillis);
+    requestAnimationFrame(runprogram);
+  }
+}
+
+var canvas_click = function(e){
+  const rect = e.target.getBoundingClientRect();
+  const canvasX = e.clientX - rect.left;
+  const canvasY = e.clientY - rect.top;
+  //console.log('canvas click:', [e.clientX,e.clientY],[canvasX,canvasY]);
+  if(USE_WAVE){
+    makeWave("screen",canvasX,canvasY,8,1);
+  }
+}
+
+const makeWave = (cType, x, y, radius, amplitude) => {
+  let glx, gly, glr;
+  if(cType == 'screen'){
+    [glx,gly] = scrtowave(x,y);
+  }
+  if(cType == 'physics'){
+    [glx,gly] = ptowave(x,y);
+  }
+  glr = radius/SCREEN_RADIUS;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,wave.c.fbuf);
+  gl.viewport(0,0,wave.c.fbuf.width, wave.c.fbuf.height);
+  const program = sprogram.gaussian;
+  gl.useProgram(program.program);
+  gl.bindBuffer(gl.ARRAY_BUFFER,shapes["square"].buf);
+  gl.enableVertexAttribArray(program.a_vertex);
+  gl.vertexAttribPointer(program.a_vertex,2,gl.FLOAT,false,0,0);
+  gl.uniform1f(program.u_scale,glr);
+  gl.uniform1f(program.u_orientation,0);
+  gl.uniform1f(program.u_ar,1);
+  gl.uniform2fv(program.u_xyoffset,[glx,gly]);
+  gl.uniform4fv(program.u_color,[0,0,1,1]);
+  gl.uniform1f(program.u_amp, amplitude);
+  gl.drawArrays(gl.TRIANGLES,0,shapes["square"].tris*3);
+  //debugTable.push(['wave at', glx, gly]);
+  //debugTable.push([cType, x, y]);
+};
+
+
+let started;
+const startgame = () => {
+  started = true;
+  runprogram();
+}
+</script>
+  </head><body>
+  </body>
+</html>
