@@ -1,22 +1,35 @@
-// exports chatclient(), which, of course, is at the end of the file
-var socket;
-var chatbox;
-var nick = "";
-var room = document.location.pathname;
+'use strict';
 
-var iojs = document.createElement("script");
+// exports chatclient(), which, of course, is at the end of the file
+let chatbox;
+let socketPRes;
+const socketP = new Promise(res => socketPRes = res);
+
+var chatClientVars = {
+  socketP,
+  socket: undefined,
+  nick: '',
+  room: document.location.pathname
+};
+
+let iojs = document.createElement("script");
 iojs.type = "text/javascript";
 iojs.src = "/socket.io/socket.io.js";
 iojs.onload = function(){
-  socket = io();
+  const socket = io();
+  chatClientVars.socket = socket;
+  socketPRes(socket);
   socket.on('connected', onconnected);
   socket.on('chat message', onchatmsg);
 };
 document.getElementsByTagName("head")[0].appendChild(iojs);
 
 var onconnected = function(){
-  socket.emit('room subscribe', {room: room, nick: nick});
-}
+  chatClientVars.socket.emit('room subscribe', {
+    room: chatClientVars.room,
+    nick: chatClientVars.nick
+  });
+};
 
 var onchatmsg = function(msg){
   var chatr = document.createElement('tr');
@@ -51,21 +64,23 @@ var chatkeypress = function(e){
       if(s != -1){
         var cmd = msg.substr(1,s-1);
         var param = msg.substr(s+1,msg.length);
-        if(cmd == 'nick')
-          socket.emit('nick', {nick: param});
-        else
+        if(cmd == 'nick'){
+          chatClientVars.socket.emit('nick', {nick: param});
+          chatClientVars.nick = param;
+        } else {
           alert('Unrecognized chat command: "' + cmd + '"');
+        }
       }
     }
     else
-      socket.emit('chat message', {msg: msg});
+      chatClientVars.socket.emit('chat message', {msg: msg});
     e.target.value = '';
     return false;
   }
   return true;
 }
 
-chatclient = function(chatline, inchatbox){
+var chatclient = function(chatline, inchatbox){
   chatline.onkeypress = chatkeypress;
   chatbox = document.createElement("table");
   inchatbox.appendChild(chatbox);

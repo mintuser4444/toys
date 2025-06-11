@@ -1,0 +1,106 @@
+<html>
+  <head>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="/chatclient.js"></script>
+    <script>
+let peer = null;
+let peerId = null;
+const conns = [];
+
+window.onload = async () => {
+  const peer = new Peer(null, {
+		host: "localhost",
+		port: 80,
+    path: "/peerjs/peerjs",
+	});
+
+  peer.on('open', async id => {
+    console.log('my id is', id);
+    peerId = id;
+    document.getElementById('peerId').textContent = id;
+    const socket = await chatClientVars.socketP;
+    socket.emit('peerJsId', {peerJsId: id});
+  });
+
+  peer.on('connect', conn => {
+    console.log('got connection', conn);
+    conns.push(conn);
+  });
+
+  peer.on('call', async call => {
+    console.log('call recieved');
+    const userMedia = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
+    console.log('userMedia is', userMedia);
+    call.answer(userMedia);
+    conns.push(call);
+    call.on('stream', useTheirStream);
+  });
+
+  const useTheirStream = theirStream => {
+    const video = document.getElementById('their-video');
+    video.srcObject = theirStream;
+    video.play();
+  };
+
+  document.getElementById('call').onclick = evt => {
+    const callThis = document.getElementById('host-field').value;
+    console.log('calling', callThis);
+    const call = peer.call(callThis, document.getElementById('my-video').srcObject);
+    call.on('stream', useTheirStream);
+  };
+
+  const chatline = document.getElementById("chatline");
+  const chats = document.getElementById("chats");
+  chatclient(chatline, chats);
+  (async () => {
+    const socket = await chatClientVars.socketP;
+    socket.emit('get host', {
+      room: chatClientVars.room
+    });
+    socket.on('host', msg => {
+      console.log('socket: host', msg);
+      document.getElementById('host-field').value = msg.host;
+    });
+  })();
+
+  document.getElementById('become-host').onclick = async evt => {
+    const socket = await chatClientVars.socketP;
+    socket.emit('become host', {
+      room: chatClientVars.room
+    });
+  }
+
+  document.getElementById('get-host').onclick = async evt => {
+    const socket = await chatClientVars.socketP;
+    socket.emit('get host', {
+      room: chatClientVars.room
+    });
+  }
+
+  (async () => {
+    const ourVideo = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    const videoTag = document.getElementById('my-video');
+    videoTag.srcObject = ourVideo;
+    videoTag.play();
+  })();
+}
+
+</script>
+  </head>
+  <body>
+    PeerJS id is <span id="peerId">null</span>.
+    <button id="become-host">claim room</button>
+    PeerJS id to contact is <input type="text" id="host-field"></input>
+    <button id="get-host">get host</button>
+    <button id="call">call</button>
+    <video id="my-video"></video>
+    <video id="their-video"></video>
+    <div>
+      Chats
+      <div>
+        <input id="chatline" type="text"/>
+      </div>
+      <div id="chats"/>
+    </div>
+  </body>  
+</html>

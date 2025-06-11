@@ -176,6 +176,7 @@ startturtlepond = function(width, height, tag){
 
   canvas.addEventListener("mousemove", storemousepos);
   canvas.addEventListener("click", addfood, false);
+  canvas.addEventListener("touchend", addfood, false);
   setup_drawing();
   mainloop();
 };
@@ -202,8 +203,8 @@ var addfood = function(e){
   mousex = e.clientX - r.left;
   mousey = e.clientY - r.top;
   var foodi = {
-    x: mousex,
-    y: screenheight-mousey,
+    x: screenwidth-mousex,
+    y: mousey,
     xdot: 0,
     ydot: 0,
     r: foodradius,

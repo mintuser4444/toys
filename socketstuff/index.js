@@ -1,56 +1,16 @@
 // Express, MongoDB, socket.io
 var app = require('express')();
 app.disable('x-powered-by'); // to prevent attacks targeted at the framework
-var http = require('http').Server(app);
+var http = require('http');
+var https = require('https');
 const multiparty = require('multiparty');
-var io = require('socket.io')(http);
+const { ExpressPeerServer } = require('peer');
+var io = require('socket.io')();
 const sqlite = require('sqlite');
 const sqlite3 = require('sqlite3');
 var assert = require('assert');
 
-
-/////////////////////// hml library
-const hml = {};
-{
-  const makeSpace = (indent) => ''.padEnd(2*indent);
-const element = (name, params, childs) => {
-  if(childs === undefined && Array.isArray(params)){
-    childs = params;
-    params = undefined;
-  }
-  return {name, params, childs, render: function(){return render(this)}};
-};
-const render = (element, indent=0, buffer) => {
-  //console.log('rendering at indent', indent, element.name);
-  const newBuffer = !buffer;
-  if(newBuffer){
-    buffer = [];
-  }
-  if(typeof element == 'string'){
-    buffer.push(makeSpace(indent) + element);
-  } else {
-    const {name, params, childs} = element;
-    let paramText = params ? Object.keys(params).map(p=>` ${p}=${JSON.stringify(params[p])}`).join('') : '';
-    const startTag = `<${name}${paramText}>`;
-    const endTag = `</${name}>`;
-    if(childs?.length){
-      buffer.push(makeSpace(indent) + startTag);
-      childs.forEach(child => render(child, indent+1, buffer));
-      buffer.push(makeSpace(indent) + endTag);
-    } else {
-      buffer.push(makeSpace(indent) + startTag + endTag);
-    }
-  }
-  if(newBuffer){
-    return buffer.join('\n');
-  }
-}
-Object.assign(hml, {
-  element,
-  render
-});
-['html','head','body','b','i','p','title','select','option','form','button','input','textArea'].forEach(key => hml[key] = (params, childs) => element(key, params, childs));
-}
+const hml = require('./hml');
 
 // used to attach the debugger
 var net = require('net');
@@ -58,9 +18,11 @@ var repl = require('repl');
 var fs = require('fs');
 var path = require('path');
 
-var port = process.env.PORT || 8080;
+var httpPort = 80;
+var httpsPort = 443;
 
 __dirname = process.cwd()+"/";
+const toysDir = process.cwd().split('/').slice(0,-1).join('/') + '/';
 
 let dbPromiseResolve;
 let dbPromise = new Promise(res=>dbPromiseResolve=res);
@@ -98,93 +60,146 @@ const createDb = async () => {
   );`);
 }
 
+const printSocketData = socketData => {
+  const socketDataCopy = {...socketData};
+  delete socketDataCopy.socket;
+  return socketDataCopy;
+}
 
-var socketdata = [];
+const allSocketData = [];
 io.on('connection', function(socket){
   console.log('socket connection:' + socket);
-  var socketdatai = {socket: socket, nick: '', room: ''};
-  socketdata.push(socketdatai);  
+  const mySocketData = {
+    socket,
+    nick: '',
+    room: '',
+    peerJsId: undefined,
+    hosting: []
+  };
+  allSocketData.push(mySocketData);  
 
   socket.on('room subscribe', async function(msg){
-    socketdatai.room = msg.room;
+    console.log('socket', 'room subscribe', msg, printSocketData(mySocketData));
+    mySocketData.room = msg.room;
     const myChats = await db.all('SELECT * FROM chats WHERE room=?;',msg.room);
     myChats.forEach(doc => {
       console.log('sending old chats: ' + doc.msg);
-      socket.emit('chat message', {msg:  doc.msg,
-                                   nick: doc.nick,
-                                   time: doc.time});
+      socket.emit('chat message', {
+        msg:  doc.msg,
+        nick: doc.nick,
+        time: doc.time
+      });
     });
-    console.log('room subscribe: ' + socketdatai.nick + '->' + socketdatai.room);
   });
 
   socket.on('nick', function(msg){
-    var oldnick = socketdatai.nick;
-    socketdatai.nick = msg.nick;
-    if(socketdatai.room != '' && oldnick != ''){
-      roommsg({room: socketdatai.room,
-               nick: oldnick,
-               msg: "nick change to " + msg.nick,
-               time: Date.now()});
+    var oldnick = mySocketData.nick;
+    mySocketData.nick = msg.nick;
+    if(mySocketData.room != '' && oldnick != ''){
+      roommsg({
+        room: mySocketData.room,
+        nick: oldnick,
+        msg: "nick change to " + msg.nick,
+        time: Date.now()
+      });
     };
     console.log('nick change: ' + oldnick + ' →  ' + msg.nick);
   });
 
+  socket.on('peerJsId', msg => {
+    mySocketData.peerJsId = msg.peerJsId;
+  });
 
   socket.on('disconnect', function(){
-    var nick = socketdatai.nick;
-    var room = socketdatai.room;
+    var nick = mySocketData.nick;
+    var room = mySocketData.room;
     if(nick == '')
       nick = 'someone';
     if(room == '')
       room = 'nowhere';
     var time = Date.now();
-    var i = socketdata.indexOf(socketdatai);
-    socketdata.splice(i,1);
+    var i = allSocketData.indexOf(mySocketData);
+    allSocketData.splice(i,1);
     roommsg({room: room, nick: nick, msg: "disconnected", time: time});
     console.log(nick + ' disconnected from ' + room + " at " + time);
   });
 
   socket.on('chat message', async function(msg){
-    smsg = {msg: msg.msg,
-            nick: socketdatai.nick,
-            room: socketdatai.room,
-            time: Date.now()};
+    const smsg = {
+      msg: msg.msg,
+      nick: mySocketData.nick,
+      room: mySocketData.room,
+      time: Date.now()
+    };
     await db.run('INSERT INTO chats VALUES (?,?,?,?);',[smsg.msg,smsg.nick,smsg.room,smsg.time]);
     roommsg(smsg);
     console.log('chat message: ['+smsg.room+']['+smsg.time+']['+smsg.nick+']: '+smsg.msg);
+  });
+
+  const getHostSocketData = room => {
+    const hostSocketData = allSocketData.filter(
+      socketData=>socketData.hosting.includes(room)
+    )[0];
+    return hostSocketData;
+  };
+
+  socket.on('get host', async function(msg){
+    console.log('socket', 'get host', msg, printSocketData(mySocketData));
+    const room = msg.room;
+    const hostSocketData = getHostSocketData(room);
+    socket.emit('host', {
+      host: hostSocketData?.peerJsId,
+      room
+    });
+  });
+
+  socket.on('become host', async function(msg){
+    console.log('socket', 'become host', msg, printSocketData(mySocketData));
+    const room = msg.room;
+    const hostSocketData = getHostSocketData(room);
+    if(hostSocketData){
+      socket.emit('error', `host is ${hostSocketData.peerJsId}`);
+    } else {
+      mySocketData.hosting.push(room);
+      allSocketData.filter(
+        socketData => socketData.room == room
+      ).forEach(socketData => socketData.socket.emit('host', {
+        host: mySocketData.peerJsId,
+        room
+      }));
+    }
   });
 
   socket.emit('connected', '');
 });
 
 var roommsg = function(msg){
-  for(var i=0; i<socketdata.length; i++){
-    if(socketdata[i].room == msg.room)
-      socketdata[i].socket.emit('chat message', msg);
+  for(var i=0; i<allSocketData.length; i++){
+    if(allSocketData[i].room == msg.room)
+      allSocketData[i].socket.emit('chat message', msg);
   }
 }
 
 statics = {
-  "/": __dirname+"socketstuff/index.html",
-  "/turtlepond.js": __dirname+"turtlepond/turtlepond.js",
-  "/turtle.png": __dirname+"turtlepond/turtle.png",
-  "/fish.png": __dirname+"turtlepond/fish.png",
-  "/turtlepond/turtle512.png": __dirname+"turtlepond/turtle512.png",
-  "/turtlepond/fish128.png": __dirname+"turtlepond/fish128.png",
-  "/domtetris.html": __dirname+"domtetris/domtetris.xhtml",
-  "/tetris.css": __dirname+"domtetris/tetris.css",
-  "/tetris.js": __dirname+"domtetris/tetris.js",
-  "/chatclient.js": __dirname+"socketstuff/chatclient.js",
-  "/fractal.html": __dirname+"fractal.html",
-  "/fractal-webgl.html": __dirname+"fractal-webgl.html",
-  "/fragment.html": __dirname+"fragment.html",
-  "/gravity.html": __dirname+"gravity.html",
-  // framework js
-  "/socket.io/socket.io.js": __dirname+"socketstuff/node_modules/socket.io-client/socket.io.js"
+  "/": toysDir+"socketstuff/index.html",
+  "/peer.html": toysDir+"socketstuff/peer.html",
+  "/turtlepond.js": toysDir+"turtlepond/turtlepond.js",
+  "/turtle.png": toysDir+"turtlepond/turtle.png",
+  "/fish.png": toysDir+"turtlepond/fish.png",
+  "/turtlepond/turtle512.png": toysDir+"turtlepond/turtle512.png",
+  "/turtlepond/fish128.png": toysDir+"turtlepond/fish128.png",
+  "/domtetris.html": toysDir+"domtetris/domtetris.xhtml",
+  "/tetris.css": toysDir+"domtetris/tetris.css",
+  "/tetris.js": toysDir+"domtetris/tetris.js",
+  "/chatclient.js": toysDir+"socketstuff/chatclient.js",
+  "/fractal.html": toysDir+"fractal.html",
+  "/fractal-webgl.html": toysDir+"fractal-webgl.html",
+  "/fragment.html": toysDir+"fragment.html",
+  "/gravity.html": toysDir+"gravity.html",
 }
 var shaders = ["simple.frag","sprite.frag","circle.frag","gaussian.frag","x2gaussian.frag","wave.frag","pond_wave_display.frag","space_wave_display.frag","simple2d.vert","sprite2d.vert"];
 for(var i=0; i<shaders.length; i++){
-  statics["/shaders/"+shaders[i]] = __dirname+"shaders/"+shaders[i];
+  statics["/shaders/"+shaders[i]] = toysDir+"shaders/"+shaders[i];
 }
 
 var sendfile_curry_path = function(path){
@@ -196,6 +211,8 @@ for(s in statics){
   app.get(s, sendfile_curry_path(statics[s]));
   console.log(s+":"+statics[s]);
 }
+
+app.get('/spotcam/:pup', sendfile_curry_path(statics['/peer.html']));
 
 // dropbox
 const multiparse = (req) => new Promise((res, rej) => {
@@ -255,7 +272,7 @@ var sockserv = net.createServer(function(socket){
   var therepl = repl.start({prompt:'>',input:socket, output:socket});
   therepl.on('exit',function(){socket.end();});
   therepl.context.db = db;
-  therepl.context.socketdata = socketdata;
+  therepl.context.socketdata = allSocketData;
 })
 sockserv.on('error', function(e){
   if(e.code == 'EADDRINUSE'){
@@ -265,6 +282,29 @@ sockserv.on('error', function(e){
 });
 sockserv.listen(sockpath);
 
-http.listen(port,function(){
-  console.log('listening on *:'+port);
+const servers = [[http.Server(app), httpPort]];
+if(!process.env.NO_HTTPS){
+  const le = '/etc/letsencrypt/live/tomdonahue.net/';
+  const creds = {
+      key: 'privkey.pem',
+      cert: 'cert.pem',
+      ca: 'chain.pem'
+  };
+  for(const key in creds){
+    creds[key] = fs.readFileSync(le+creds[key]);
+  }
+  const httpsServer = https.createServer(creds, app);
+  servers.push([httpsServer, httpsPort]);
+}
+
+servers.forEach(([server, port]) => {
+  io.attach(server);
+  const peerServer = new ExpressPeerServer(server, {
+    debug: true,
+    path: '/peerjs',
+  });
+  app.use('/peerjs', peerServer);
+  server.listen(port, () => {
+    console.log('listening on port', port)
+  })
 });
