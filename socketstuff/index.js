@@ -157,17 +157,15 @@ io.on('connection', function(socket){
     console.log('socket', 'become host', msg, printSocketData(mySocketData));
     const room = msg.room;
     const hostSocketData = getHostSocketData(room);
-    if(hostSocketData){
-      socket.emit('error', `host is ${hostSocketData.peerJsId}`);
-    } else {
+    if(!hostSocketData){
       mySocketData.hosting.push(room);
-      allSocketData.filter(
-        socketData => socketData.room == room
-      ).forEach(socketData => socketData.socket.emit('host', {
-        host: mySocketData.peerJsId,
-        room
-      }));
     }
+    allSocketData.filter(
+      socketData => socketData.room == room
+    ).forEach(socketData => socketData.socket.emit('host', {
+      host: mySocketData.peerJsId,
+      room
+    }));
   });
 
   socket.emit('connected', '');
