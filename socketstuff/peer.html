@@ -9,10 +9,10 @@ const conns = [];
 
 window.onload = async () => {
   const peer = new Peer(null, {
-		host: "localhost",
-		port: 80,
+    host: window.location.host,
+    port: window.location.port,
     path: "/peerjs/peerjs",
-	});
+  });
 
   peer.on('open', async id => {
     console.log('my id is', id);
